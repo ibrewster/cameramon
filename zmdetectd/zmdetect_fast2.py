@@ -27,7 +27,7 @@ logger = None
 # Global initalization. Yes, I use a lot of global variables here. So sue me.
 config = {
     'object_framework': 'coral_edgetpu',
-    'object_min_confidence': .3,
+    'object_min_confidence': .345,
     'tpu_max_processes': 1,
     'object_weights': '/var/lib/zmeventnotification/models/coral_edgetpu/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite',
     # 'object_weights': '/var/lib/zmeventnotification/models/coral_edgetpu/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite',
