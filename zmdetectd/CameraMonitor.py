@@ -1,4 +1,5 @@
 import configparser
+import io
 import logging
 import os
 import re
@@ -6,7 +7,7 @@ import time
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging import handlers
 
 import cv2
@@ -17,48 +18,53 @@ import ujson as json
 
 import pyzm.ml.object as object_detection
 
+from PIL import Image
 from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
 from shapely.prepared import prep
 
 # Pull image directly from camera. For now, use zoneminder images to reduce load on camera
-# def download_camera_image():
-#     auth_user = 'admin'
-#     auth_password = 'shanima81'
-#     auth = requests.auth.HTTPBasicAuth(auth_user, auth_password)
-#     url = 'http://10.27.81.62/tmpfs/auto.jpg'
-#     res = requests.get(url, auth=auth)
+
+
+def download_camera_image():
+    auth_user = 'admin'
+    auth_password = 'shanima81'
+    auth = requests.auth.HTTPBasicAuth(auth_user, auth_password)
+    url = 'http://10.27.81.62/tmpfs/auto.jpg'
+    res = requests.get(url, auth=auth)
 #
-#     if res.status_code != 200:
-#         print("Error when retrieving file!")
-#         raise requests.exceptions.HTTPError("Bad Content")
+    if res.status_code != 200:
+        print("Error when retrieving file!")
+        raise requests.exceptions.HTTPError("Bad Content")
 #
-#     snapshot_img = numpy.frombuffer(res.content,
-#                                     numpy.uint8)
+    # snapshot_img = numpy.frombuffer(res.content,
+    #                                numpy.uint8)
+
+    snapshot_img = Image.open(io.BytesIO(res.content))
 #
-#     return snapshot_img
+    return snapshot_img
+
+
+ZM_IMG_URL = 'http://localhost/zm/cgi-bin/nph-zms'
+ZM_IMG_ARGS = {
+    'mode': 'single',
+    'monitor': '3',
+    'scale': 100,
+    'maxfps': 5,
+    'buffer': 1000,
+    'user': 'israel',
+    'pass': 'shanima81',
+}
 
 
 def download_zm_image():
-    url1 = 'http://localhost/zm/cgi-bin/nph-zms'
-    args = {
-        'mode': 'single',
-        'monitor': '3',
-        'scale': 100,
-        'maxfps': 5,
-        'buffer': 1000,
-        'user': 'israel',
-        'pass': 'shanima81',
-    }
-
-    res = requests.get(url1, args)
+    res = requests.get(ZM_IMG_URL, ZM_IMG_ARGS)
 
     if res.status_code != 200:
         logger.warning("Error when retrieving file!")
         raise requests.exceptions.HTTPError("Bad Content")
 
-    snapshot_img = numpy.frombuffer(res.content,
-                                    numpy.uint8)
+    snapshot_img = Image.open(io.BytesIO(res.content))
 
     return snapshot_img
 
@@ -72,7 +78,7 @@ config = {
     'object_labels': '/var/lib/zmeventnotification/models/coral_edgetpu/coco_indexed.names',
     'disable_locks': 'yes',
     'past_det_max_diff_area': .08,  # 8%
-    'max_detection_size': '80%',  # 90%
+    'max_detection_size': '50%',  # 90%
     'image_directory': '/data/zoneminder',
     'api_portal': 'https://watchman.brewstersoft.net/zm/api',
 }
@@ -85,6 +91,7 @@ zones = None
 logger = None
 prev_detections = defaultdict(list)
 detect_pattern = re.compile('(person|car|motorbike|bus|truck|boat|skateboard|horse|dog|cat)')
+interesting_objects = ("person", "car", "motorbike", "bus", "truck", "boat", "skateboard", "horse", "dog", "cat")
 
 
 def init():
@@ -195,22 +202,11 @@ def detect_image(image, img_ratio):
     logger.info("Object detection complete. Processing results")
 
     for bbox, obj, conf in zip(scaled_bboxes, objects, confs):
-        if conf < config['object_min_confidence']:
-            # logger.info(f"Ignoring {obj} {bbox} as conf. level {conf} is lower than {config['object_min_confidence']}")
-            continue  # We don't trust this object, so move on
-
-        if not detect_pattern.match(obj):
-            # logger.info(f"Ignoring {obj} {bbox} as it does not match our detect patern")
+        if obj not in interesting_objects:
+            logger.info(f"Ignoring {obj} {bbox} as it does not match our detect patern")
             continue  # Not an object of interest to us
 
         bbox_poly = box(*bbox)
-
-#         bbox_area = bbox_poly.area
-#         bbox_percent = bbox_area / img_area
-#         logger.debug(f"Detect Percent: {bbox_percent}")
-#         if bbox_percent > config.get('max_detection_size', .9):
-#             logger.info(f"Ignoring {obj} {bbox} as object area exceeds max detection size ({bbox_percent})")
-#             continue
 
         if not zones.intersects(bbox_poly):
             logger.info(f"Ignoring {obj} {bbox_poly.bounds} as it is outside our zones")
@@ -267,44 +263,53 @@ def detect_image(image, img_ratio):
     return (found_match, canidate_objects, match)
 
 
-def process_image(raw_image):
+def process_image(pil_image):
     detect_size = 500
 
-    if raw_image is not None and raw_image.size > 0:
-        # logger.info("Loading camera image")
-        image = cv2.imdecode(raw_image, cv2.IMREAD_COLOR)
-        img_ratio = image.shape[1] / detect_size
-        resized_image = imutils.resize(image, width = detect_size)
+    if pil_image is not None and any(pil_image.size):
+        logger.info("Resizing image")
 
+        img_ratio = pil_image.size[0] / detect_size
+        new_size = (numpy.asarray(pil_image.size) // img_ratio).astype(int)
+        resized_pil = pil_image.resize(new_size)
+
+        numpy_image = numpy.asarray(resized_pil)
+        opencv_image = numpy_image[:, :, ::-1]
+
+        # resized_image = imutils.resize(image, width = detect_size)
+        # resized_image = image
     else:
         # logger.warning("No image retreived to analyze")
         raise TypeError("Image was not an image")
 
-    if resized_image is None:
+    if opencv_image is None:
         # logger.warning("No image retreived to analyze")
         raise TypeError("Image was not an image")
 
-    found_match, all_objects, match_info = detect_image(resized_image, img_ratio)
+    found_match, all_objects, match_info = detect_image(opencv_image, img_ratio)
 
-    return (bool(found_match), all_objects, match_info, image)
+    return (bool(found_match), all_objects, match_info, pil_image)
 
 
 def save_image(objects, match, image):
+    # convert image to an openCV image for editing
+    image = numpy.asarray(image)[:, :, ::-1].copy()
     eventid = 1
     font = cv2.FONT_HERSHEY_TRIPLEX
     font_scale = .75
     font_thickness = 1
     frame_color = (46, 174, 85)
     padding = 3
-    img_date = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    img_date = datetime.now().strftime('%Y-%m-%d')
+    img_time = datetime.now().strftime('%H-%M-%S')
 
-    file_path = os.path.join('/data/detect_images', '3',
+    file_path = os.path.join('/data/detect_images', 'Driveway',
                              img_date)
 
     os.makedirs(file_path, exist_ok = True)
 
-    image_path = os.path.join(file_path, 'objdetect.jpg')
-    json_path = os.path.join(file_path, 'objects.json')
+    image_path = os.path.join(file_path, f'{img_time}_objdetect.jpg')
+    json_path = os.path.join(file_path, f'{img_time}_objects.json')
 
     image_link = f'https://watchman.brewstersoft.net/zm/index.php?view=image&eid={eventid}&fid=objdetect'
     detect_info = {
@@ -357,8 +362,10 @@ if __name__ == "__main__":
     init()
     # Get the inital snapshot
     snapshot = download_zm_image()
-    with ThreadPoolExecutor(max_workers = 2) as executor:
+    last_detect = datetime.min
+    with ThreadPoolExecutor() as executor:
         future_snap = None
+        print("Beginning monitoring loop")
         while True:
             t1 = time.time()
             if future_snap is not None:
@@ -379,12 +386,21 @@ if __name__ == "__main__":
                     requests.get(conf_ini['action']['action_url'])
                 except Exception:
                     logger.exception("Unable to call video")
-                    pass
 
-                note = save_image(objects, matched_obj, image)
+                if datetime.now() - last_detect > timedelta(seconds = 20):
+                    # Only save a new image if it has been more than 20 seconds
+                    # since the last object Detected.
+                    # Otherwise, it's probably the same object, just moved,
+                    # so no need for a new image.
+                    note = save_image(objects, matched_obj, image)
+                last_detect = datetime.now()
+                time.sleep(2)  # Since we know there is motion/new object, we can wait
+                # a couple of seconds before checking again.
 
             # limit prcessing to 5 FPS
             if time.time() - t1 < .2:
                 time.sleep(.2 - (time.time() - t1))
 
             logger.info(f"Ran detect loop in {time.time() - t1}")
+
+    print("Exiting detection loop and ending process")
