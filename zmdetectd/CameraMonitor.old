@@ -16,16 +16,12 @@ import numpy
 import requests
 import ujson as json
 
+import pyzm.ml.object as object_detection
+
 from PIL import Image
 from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
 from shapely.prepared import prep
-
-from pycoral.adapters.common import input_size, input_tensor
-from pycoral.adapters.detect import get_objects
-from pycoral.utils.dataset import read_label_file
-from pycoral.utils.edgetpu import make_interpreter
-from pycoral.utils.edgetpu import run_inference
 
 # Pull image directly from camera. For now, use zoneminder images to reduce load on camera
 
@@ -83,7 +79,7 @@ config = {
     'object_labels': '/var/lib/zmeventnotification/models/coral_edgetpu/coco_indexed.names',
     'disable_locks': 'yes',
     'past_det_max_diff_area': .08,  # 8%
-    'max_detection_size': .3,  # 90%
+    'max_detection_size': '50%',  # 90%
     'image_directory': '/data/zoneminder',
     'api_portal': 'https://watchman.brewstersoft.net/zm/api',
 }
@@ -91,34 +87,44 @@ config = {
 conf_ini = configparser.ConfigParser()
 conf_ini.read('/etc/zm/zmdetect.ini')
 
-interpreter = None
-inference_size = None
-labels = None
 model = None
 zones = None
 logger = None
 prev_detections = defaultdict(list)
 detect_pattern = re.compile('(person|car|motorbike|bus|truck|boat|skateboard|horse|dog|cat)')
-interesting_objects = ("person", "bicycle", "car", "motorbike", "bus", "truck", "boat", "skateboard", "horse", "dog", "cat")
+interesting_objects = ("person", "car", "motorbike", "bus", "truck", "boat", "skateboard", "horse", "dog", "cat")
 
 
 def init():
     global model
-    global interpreter
-    global labels
-    global inference_size
     global zones
 
     init_logging()
 
     logger.info("Setting up model")
-    interpreter = make_interpreter(config['object_weights'])
-    interpreter.allocate_tensors()
-    labels = read_label_file(config['object_labels'])
-    inference_size = input_size(interpreter)
-
-    logger.info("Loading Zones")
+    model = object_detection.Object(options=config)
     zones = load_zones(3)
+
+
+# Stupid overides since pyzm doesn't use the default logging module
+def zmlog_Debug(level, message, caller = None):
+    return logger.debug(message)
+
+
+def zmlog_Info(message, caller = None):
+    return logger.info(message)
+
+
+def zmlog_Warning(message, caller = None):
+    return logger.warning(message)
+
+
+def zmlog_Error(message, caller = None):
+    return logger.error(message)
+
+
+def zmlog_Fatal(message, caller = None):
+    return logger.fatal(message)
 
 
 def init_logging():
@@ -136,6 +142,15 @@ def init_logging():
     logger.addHandler(handler)
 
     logging.basicConfig(format=FORMAT, level=logging.WARNING, datefmt='%Y-%m-%d %H:%M:%S')
+
+    logger.Debug = zmlog_Debug
+    logger.Info = zmlog_Info
+    logger.Warning = zmlog_Warning
+    logger.Error = zmlog_Error
+    logger.Fatal = zmlog_Fatal
+    logger.Panic = zmlog_Fatal
+
+    object_detection.g.logger = logger
 
 
 def process_coordinates(coords):
@@ -166,7 +181,7 @@ def load_zones(monitor):
     return zones
 
 
-def detect_image(image, img_ratio, img_area):
+def detect_image(image, img_ratio):
     global prev_detections
 
     logger.info("Processing image for event")
@@ -174,45 +189,32 @@ def detect_image(image, img_ratio, img_area):
     found_match = False
     canidate_objects = []
 
+    if image is None:
+        return (found_match, canidate_objects, match)  # No image means no object to detect
+
     logger.info(f"Detecting objects in image")
 
-    h, w, channel = image.shape
-    detect_image = numpy.zeros(inference_size + (channel, ), image.dtype)
-    detect_image[:h, :w] = image
-    run_inference(interpreter, detect_image.tobytes())
-    objs = get_objects(interpreter, config['object_min_confidence'])
+    t1 = time.time()
+    bboxes, objects, confs, method = model.detect(image)
 
-    if not objs:
+    # See if there are any interesting objects
+    if not bool(set(objects).intersection(interesting_objects)):
+        # if not, do nothing
         return (found_match, canidate_objects, match)
 
     new_detections = defaultdict(list)
     past_det_threshold = 1 - config['past_det_max_diff_area']
 
+    scaled_bboxes = numpy.array(bboxes) * img_ratio
+
     logger.info("Object detection complete. Processing results")
 
-    objects = []
-    confs = []
-    bboxes = []
-    for item in objs:
-        obj = labels[item.id]
-        objects.append(obj)
-
-        bbox = numpy.asarray(item.bbox) * img_ratio
-        bboxes.append(bbox)
-
-        conf = item.score
-        confs.append(conf)
-
+    for bbox, obj, conf in zip(scaled_bboxes, objects, confs):
         if obj not in interesting_objects:
             logger.info(f"Ignoring {obj} {bbox} as it does not match our detect patern")
             continue  # Not an object of interest to us
 
         bbox_poly = box(*bbox)
-
-        poly_area = bbox_poly.area
-        if poly_area / img_area > config['max_detection_size']:
-            logger.info(f"Ignoring {obj} {bbox_poly.bounds} as it is too large")
-            continue
 
         if not zones.intersects(bbox_poly):
             logger.info(f"Ignoring {obj} {bbox_poly.bounds} as it is outside our zones")
@@ -248,8 +250,8 @@ def detect_image(image, img_ratio, img_area):
             logger.debug(f"bbox intersect area for object {obj}, {conf}: {bbox_percent} past percent: {past_percent}")
 
             if intersect_area != 0 and \
-               (bbox_percent > past_det_threshold and
-                    past_percent > past_det_threshold):
+               (bbox_percent > past_det_threshold
+                    and past_percent > past_det_threshold):
                 logger.info(f"Ignoring {obj} {bbox} as we have already seen it")
                 break
         else:
@@ -270,21 +272,29 @@ def detect_image(image, img_ratio, img_area):
 
 
 def process_image(pil_image):
-    if pil_image is None or not any(pil_image.size):
+    detect_size = 500
+
+    if pil_image is not None and any(pil_image.size):
+        logger.info("Resizing image")
+
+        img_ratio = pil_image.size[0] / detect_size
+        new_size = (numpy.asarray(pil_image.size) // img_ratio).astype(int)
+        resized_pil = pil_image.resize(new_size)
+
+        numpy_image = numpy.asarray(resized_pil)
+        opencv_image = numpy_image[:, :, ::-1]
+
+        # resized_image = imutils.resize(image, width = detect_size)
+        # resized_image = image
+    else:
+        # logger.warning("No image retreived to analyze")
         raise TypeError("Image was not an image")
 
-    target_ratio = max(pil_image.size[0] / inference_size[0],
-                       pil_image.size[1] / inference_size[1])
+    if opencv_image is None:
+        # logger.warning("No image retreived to analyze")
+        raise TypeError("Image was not an image")
 
-    img_area = pil_image.size[0] * pil_image.size[1]
-    logger.info("Resizing image")
-
-    new_size = (numpy.asarray(pil_image.size) // target_ratio).astype(int)
-    resized_pil = pil_image.resize(new_size, reducing_gap=2.0)
-
-    opencv_image = numpy.asarray(resized_pil)
-
-    found_match, all_objects, match_info = detect_image(opencv_image, target_ratio, img_area)
+    found_match, all_objects, match_info = detect_image(opencv_image, img_ratio)
 
     return (bool(found_match), all_objects, match_info, pil_image)
 
