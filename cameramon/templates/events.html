@@ -1,0 +1,46 @@
+<html>
+<head>
+    <link rel="stylesheet" href="/static/styles/index.css">
+    <link rel="stylesheet" href="/static/styles/events.css">
+</head>
+<body>
+    <div id=header>
+        <div id=TitleText>CameraMonitor</div>
+        <div id="navigation">
+            <a href="/">Console</a>
+        </div>
+    </div>
+    <table id=events>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Objects</th>
+                <th>Thumbnail</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in events %}
+            <tr>
+                <td><a target="_blank" href="getImage?monitor={{monitor}}&date={{event[0]}}&time={{event[1]}}">{{event[0]}}</a></td>
+                <td>
+                    <a target="_blank" href="getImage?monitor={{monitor}}&date={{event[0]}}&time={{event[1]}}">
+                    {{event[1]}}
+                    </a>
+                </td>
+                <td class="leftAlign">
+                    <a target="_blank" href="getImage?monitor={{monitor}}&date={{event[0]}}&time={{event[1]}}">
+                    Detected: {{event[2]}}
+                    </a>
+                </td>
+                <td>
+                    <a target="_blank" href="getImage?monitor={{monitor}}&date={{event[0]}}&time={{event[1]}}">
+                        <img src="getImage?monitor={{monitor}}&date={{event[0]}}&time={{event[1]}}">
+                    </a>
+                </td>
+            </tr>
+            {%endfor%}
+        </tbody>
+    </table>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<html>
+<head>
+    <link rel="stylesheet" href="/static/styles/index.css">
+</head>
+<body>
+
+    <div id=header>
+        <span id=TitleText>CameraMonitor</span>
+    </div>
+    <table id=monitors>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Events</th>
+                <th>Day</th>
+                <th>Week</th>
+                <th>Month</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for monitor in monitors %}
+            <tr>
+                <td>{{monitor}}</td>
+                <td><a href="getEvents?type=all&monitor={{monitor}}">{{monitors[monitor]['all']}}</a></td>
+                <td><a href="getEvents?type=day&monitor={{monitor}}">{{monitors[monitor]['day']}}</a></td>
+                <td><a href="getEvents?type=week&monitor={{monitor}}">{{monitors[monitor]['week']}}</a></td>
+                <td><a href="getEvents?type=month&monitor={{monitor}}">{{monitors[monitor]['month']}}</a></td>
+            </tr>
+            {%endfor%}
+        </tbody>
+    </table>
+</body>
+</html>
