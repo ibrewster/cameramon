@@ -101,11 +101,12 @@ interpreter = None
 inference_size = None
 labels = None
 zones = None
+car_zones = None
 logger = None
 prev_detections = defaultdict(list)
 detect_pattern = re.compile('(person|car|motorbike|bus|truck|boat|skateboard|horse|dog|cat)')
 interesting_objects = ("person", "bicycle", "car", "motorbike", "bus", "truck", "boat", "skateboard", "horse", "dog", "cat")
-LOG_LEVEL = logging.INFO
+LOG_LEVEL = logging.DEBUG
 
 
 def init():
@@ -113,6 +114,7 @@ def init():
     global labels
     global inference_size
     global zones
+    global car_zones
 
     init_logging()
 
@@ -123,7 +125,7 @@ def init():
     inference_size = input_size(interpreter)
 
     logger.info("Loading Zones")
-    zones = load_zones(3)
+    zones, car_zones = load_zones(3)
 
 
 def init_logging():
@@ -141,7 +143,7 @@ def init_logging():
     logger.addHandler(handler)
 
     logging.basicConfig(format=FORMAT, level=LOG_LEVEL, datefmt='%Y-%m-%d %H:%M:%S')
-
+    logging.info(f"Log level set to {LOG_LEVEL}")
 
 def process_coordinates(coords):
     points = coords.split()
@@ -168,7 +170,19 @@ def load_zones(monitor):
     logger.debug(str(zone_coords))
     zones = prep(unary_union(zone_coords))
     logger.debug(str(zones))
-    return zones
+    
+    no_car_names = ['Yard', 'Front Bush1', 'Side Bushes', 'Porch']
+    car_zone_coords = [
+        process_coordinates(x['Zone']['Coords'])
+        for x in zone_list
+        if x['Zone']['Type'] == 'Active'
+        and x['Zone']['Name'] not in no_car_names]
+    
+    car_zone = unary_union(car_zone_coords)
+    logger.debug(str(car_zone))
+    car_zones = prep(car_zone)
+    
+    return (zones, car_zones)
 
 def run_inference(image):
     logger.debug(f"Detecting objects in image")
@@ -223,7 +237,14 @@ def detect_image(image, img_ratio, img_area):
             logger.debug(f"Ignoring {obj} {bbox_poly.bounds} as it is too large")
             continue
 
-        if not zones.intersects(bbox_poly):
+        # We look at a more restrictive set of zones if the object is a vehicle
+        # Hopefully will avoid false alarms of a car in the yard...
+        check_zones = car_zones if obj in ['car', 'truck'] else zones
+        zone_name = "car zones" if check_zones is car_zones else "zones"
+        logger.info(f"Checking object of type {obj} against zones {zone_name}")
+        
+        # If the object is not inside our zones of interest, ignore it.
+        if not check_zones.intersects(bbox_poly):
             logger.debug(f"Ignoring {obj} {bbox_poly.bounds} as it is outside our zones")
             continue
 
