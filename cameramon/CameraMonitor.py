@@ -106,7 +106,7 @@ logger = None
 prev_detections = defaultdict(list)
 detect_pattern = re.compile('(person|car|motorbike|bus|truck|boat|skateboard|horse|dog|cat)')
 interesting_objects = ("person", "bicycle", "car", "motorbike", "bus", "truck", "boat", "skateboard", "horse", "dog", "cat")
-LOG_LEVEL = logging.DEBUG
+LOG_LEVEL = logging.INFO
 
 
 def init():
@@ -143,7 +143,6 @@ def init_logging():
     logger.addHandler(handler)
 
     logging.basicConfig(format=FORMAT, level=LOG_LEVEL, datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info(f"Log level set to {LOG_LEVEL}")
 
 def process_coordinates(coords):
     points = coords.split()
