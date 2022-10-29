@@ -240,7 +240,7 @@ def detect_image(image, img_ratio, img_area):
         # Hopefully will avoid false alarms of a car in the yard...
         check_zones = car_zones if obj in ['car', 'truck'] else zones
         zone_name = "car zones" if check_zones is car_zones else "zones"
-        logger.info(f"Checking object of type {obj} against zones {zone_name}")
+        logger.debug(f"Checking object of type {obj} against zones {zone_name}")
         
         # If the object is not inside our zones of interest, ignore it.
         if not check_zones.intersects(bbox_poly):
