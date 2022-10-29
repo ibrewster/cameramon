@@ -246,6 +246,12 @@ def detect_image(image, img_ratio, img_area):
         if not check_zones.intersects(bbox_poly):
             logger.debug(f"Ignoring {obj} {bbox_poly.bounds} as it is outside our zones")
             continue
+        
+        # If the object is a car or truck, and it is mostly in the yard, ignore it even if 
+        # it pokes into the driveway
+        if obj in ['car', 'truck'] and bbox[0] < 10 and bbox[2] > (image.shape[1] - 10):
+            logger.info(f"Got car in yard. Ignoring.")
+            continue
 
         # Good object, in our zones.
         # Store as a match
