@@ -268,7 +268,7 @@ def detect_image(image, img_ratio, img_area):
             # Just store this match (above) and move on.
             continue
 
-        comp_objects = prev_detections[obj]
+        comp_objects = prev_detections[obj].copy()
         # Cars and trucks are sometimes confused, so look for either when one is found
         if obj == "car":
             comp_objects += prev_detections.get('truck', [])
@@ -300,10 +300,11 @@ def detect_image(image, img_ratio, img_area):
 
     if found_match:
         prev_detections = new_detections
+        print("***********Replaced prev_detections with new_detections")
         obj, bbox_poly, conf = match
         logger.info(f"Matched {obj} {bbox_poly} with conf. level {conf}")
-        logger.debug(f"All Objects: {list(zip(objects, confs, bboxes))}")
-
+        logger.debug(f"All Objects: {list(zip(objects, confs, bboxes))}") 
+    
     return (found_match, canidate_objects, match)
 
 
