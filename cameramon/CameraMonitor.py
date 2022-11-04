@@ -249,10 +249,9 @@ def detect_image(image, img_ratio, img_area):
         
         # If the object is a car or truck, and it is mostly in the yard, ignore it even if 
         # it pokes into the driveway
-        img_width = image.shape[1] * img_ratio
-        if obj in ['car', 'truck'] and bbox[1] < 10 and bbox[2] > (img_width - 10):
-            logger.info(f"Got car in yard (bbox: {bbox}, image width: {img_width}). Ignoring.")
-            save_image([(obj, bbox, conf)], False, image)
+        full_width = image.shape[1] * img_ratio
+        if obj in ['car', 'truck'] and bbox[1] < 10 and bbox[2] > (full_width - 10):
+            logger.info(f"Got car in yard (bbox: {bbox}, image width: {full_width}). Ignoring.")
             continue
 
         # Good object, in our zones.
@@ -289,8 +288,8 @@ def detect_image(image, img_ratio, img_area):
                     past_percent > past_det_threshold):
                 logger.debug(f"Ignoring {obj} {bbox} as we have already seen it")
                 break
-            else:
-                logger.info(f"bbox intersect area for object {obj} with conf {round(conf,2)}: {round(bbox_percent,2)}/{round(past_percent,2)}")
+            # else:
+                # logger.info(f"bbox intersect area for object {obj} with conf {round(conf,2)}: {round(bbox_percent,2)}/{round(past_percent,2)}")
         else:
             # Didn't break out of for loop, therfore object didn't match
             # *anything* in past objects
