@@ -249,8 +249,9 @@ def detect_image(image, img_ratio, img_area):
         
         # If the object is a car or truck, and it is mostly in the yard, ignore it even if 
         # it pokes into the driveway
-        if obj in ['car', 'truck'] and bbox[1] < 10 and bbox[2] > (image.shape[1] - 10):
-            logger.info(f"Got car in yard (bbox: {bbox}, image shape: {image.shape}). Ignoring.")
+        img_width = image.shape[1] * img_ratio
+        if obj in ['car', 'truck'] and bbox[1] < 10 and bbox[2] > (img_width - 10):
+            logger.info(f"Got car in yard (bbox: {bbox}, image width: {img_width}). Ignoring.")
             save_image([(obj, bbox, conf)], False, image)
             continue
 
