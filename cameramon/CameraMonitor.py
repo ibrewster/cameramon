@@ -250,7 +250,8 @@ def detect_image(image, img_ratio, img_area):
         # If the object is a car or truck, and it is mostly in the yard, ignore it even if 
         # it pokes into the driveway
         if obj in ['car', 'truck'] and bbox[1] < 10 and bbox[2] > (image.shape[1] - 10):
-            logger.info(f"Got car in yard. Ignoring.")
+            logger.info(f"Got car in yard (bbox: {bbox}, image shape: {image.shape}). Ignoring.")
+            save_image([(obj, bbox, conf)], False, image)
             continue
 
         # Good object, in our zones.
@@ -355,7 +356,9 @@ def process_opencv_image(original_image):
 
 def save_image(objects, match, image):
     # convert image to an openCV image for editing
-    image = numpy.asarray(image)[:, :, ::-1].copy()
+    if not isinstance(image, numpy.ndarray):
+        image = numpy.asarray(image)[:, :, ::-1].copy()
+    
     eventid = 1
     font = cv2.FONT_HERSHEY_TRIPLEX
     font_scale = .75
