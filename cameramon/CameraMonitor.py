@@ -250,7 +250,8 @@ def detect_image(image, img_ratio, img_area):
         # If the object is a car or truck, and it is mostly in the yard, ignore it even if 
         # it pokes into the driveway
         full_width = image.shape[1] * img_ratio
-        if obj in ['car', 'truck'] and bbox[1] < 10 and bbox[2] > (full_width - 30):
+        vehicles = ('car', 'truck', 'bus')
+        if obj in vehicles and bbox[1] < 10 and bbox[2] > (full_width - 30):
             logger.info(f"Got car in yard (bbox: {bbox}, image width: {full_width}). Ignoring.")
             continue
 
@@ -268,10 +269,10 @@ def detect_image(image, img_ratio, img_area):
             # Just store this match (above) and move on.
             continue
 
-        vehicles = ('car', 'truck', 'bus')
         if obj in vehicles:
-            comp_objects = (shape for vehicle
-                            in vehicles
+            # Compare to *any* vehicles we have seen, as it often gets confused
+            comp_objects = (shape
+                            for vehicle in vehicles
                             for shape in prev_detections.get(vehicle, []))
         else:
             comp_objects = prev_detections.get(obj, []).copy()
