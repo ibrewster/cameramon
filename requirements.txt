@@ -1,0 +1,10 @@
+flask
+numpy
+pillow
+pycoral
+requests
+shapely
+tflite
+ujson
+urllib3
+zipp
