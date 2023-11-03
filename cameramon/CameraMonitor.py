@@ -45,7 +45,7 @@ def download_camera_image():
     return snapshot_img
 
 
-ZM_IMG_URL = 'http://localhost/zm/cgi-bin/nph-zms'
+ZM_IMG_URL = 'https://watchman.brewstersoft.net/zm/cgi-bin/nph-zms'
 ZM_IMG_ARGS = {
     'mode': 'single',
     'monitor': '3',
