@@ -251,7 +251,7 @@ def detect_image(image, img_ratio, img_area):
         # it pokes into the driveway
         full_width = image.shape[1] * img_ratio
         vehicles = ('car', 'truck', 'bus')
-        if obj in vehicles and bbox[1] < 30 and bbox[2] > (full_width - 50):
+        if obj in vehicles and bbox[2] > (full_width - 100):
             logger.info(f"Got car in yard (bbox: {bbox}, image width: {full_width}). Ignoring.")
             continue
 
