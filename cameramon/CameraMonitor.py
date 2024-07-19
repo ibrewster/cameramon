@@ -14,6 +14,7 @@ import numpy
 import requests
 import ujson as json
 
+import paho.mqtt.publish as publish_mqtt
 from PIL import Image
 from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
@@ -466,6 +467,18 @@ if __name__ == "__main__":
                     requests.get(conf_ini['action']['action_url'])
                 except Exception:
                     logger.exception("Unable to call video")
+                    
+                mqtt_broker = conf_ini['action'].get('mqtt_broker', None)
+                if mqtt_broker:
+                    mqtt_user = conf_ini['action'].get('mqtt_user', None)
+                    mqtt_password = conf_ini['action'].get('mqtt_password', None)
+                    auth = None
+                    if mqtt_user and mqtt_password:
+                        auth={'username':mqtt_user, 'password':mqtt_password}
+                    publish_mqtt.single('cameramon/object', payload='detected', 
+                                       hostname=mqtt_broker, 
+                                       client_id="cameramon",
+                                       auth=auth)
     
                 if datetime.now() - last_detect > timedelta(seconds = 20):
                     # Only save a new image if it has been more than 20 seconds

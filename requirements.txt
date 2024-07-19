@@ -8,3 +8,4 @@ tflite
 ujson
 urllib3
 zipp
+paho-mqtt
