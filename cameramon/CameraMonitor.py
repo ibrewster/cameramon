@@ -1,12 +1,17 @@
 import configparser
 import io
 import logging
+import math
 import os
 import re
+import socket
+import threading
 import time
+
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import lru_cache
 from logging import handlers
 
 import cv2
@@ -20,79 +25,68 @@ from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
 from shapely.prepared import prep
 
-from pycoral.adapters.common import input_size, input_tensor
-from pycoral.adapters.detect import get_objects
-from pycoral.utils.dataset import read_label_file
-from pycoral.utils.edgetpu import make_interpreter
+coral_tpu = False
 
-
-def download_camera_image():
-    """Code to pull image directly from camera rather than via zoneminder"""
-    auth_user = 'admin'
-    auth_password = 'shanima81'
-    auth = requests.auth.HTTPBasicAuth(auth_user, auth_password)
-    url = 'http://10.27.81.62/tmpfs/auto.jpg'
-    res = requests.get(url, auth=auth)
-#
-    if res.status_code != 200:
-        print("Error when retrieving file!")
-        raise requests.exceptions.HTTPError("Bad Content")
-#
-    # snapshot_img = numpy.frombuffer(res.content,
-    #                                numpy.uint8)
-
-    snapshot_img = Image.open(io.BytesIO(res.content))
-
-    return snapshot_img
-
-
-ZM_IMG_URL = 'https://watchman.brewstersoft.net/zm/cgi-bin/nph-zms'
-ZM_IMG_ARGS = {
-    'mode': 'single',
-    'monitor': '3',
-    'scale': 100,
-    'maxfps': 15,
-    'buffer': 1000,
-    'user': 'israel',
-    'pass': 'shanima81',
-}
-
-
-def download_zm_image(fmt = 'pil'):
-    res = requests.get(ZM_IMG_URL, ZM_IMG_ARGS)
-
-    if res.status_code != 200:
-        logger.warning("Error when retrieving file!")
-        raise requests.exceptions.HTTPError("Bad Content")
-
-    if fmt == 'pil':
-        snapshot_img = Image.open(io.BytesIO(res.content))
-    elif fmt == 'opencv':
-        numpy_img = numpy.frombuffer(res.content, numpy.uint8)
-        snapshot_img = cv2.imdecode(numpy_img, cv2.IMREAD_COLOR)
-    else:
-        raise ValueError(f"Invalid image format specified ({fmt}). Must be one of: ['pil', 'opencv']")
+try:    
+    from pycoral.adapters.common import input_size, input_tensor
+    from pycoral.adapters.detect import get_objects
+    from pycoral.utils.dataset import read_label_file
+    from pycoral.utils.edgetpu import make_interpreter
+    coral_tpu = True
+except ImportError:
+    import tensorflow as tf
     
-    return snapshot_img
-
+    def read_label_file(label_file):
+        """Reads a label file and returns a dictionary mapping label indices to label names."""
+        with open(label_file, 'r') as f:
+            labels = {}
+            for line in f.readlines():
+                i, label = line.strip().split(' ', 1)
+                labels[int(i)] = label.strip()
+            return labels
+        
+    def input_size(interpreter):
+        """Returns the input size for the model."""
+        input_details = interpreter.get_input_details()
+        return input_details[0]['shape'][1:3]  # Assuming the input shape is [1, height, width, channels]
+    
+    def input_tensor(interpreter):
+        """Returns the input tensor for the model."""
+        input_details = interpreter.get_input_details()
+        input_index = input_details[0]['index']
+        return interpreter.get_tensor(input_index)[0]
+    
+    class DetectedObject:
+        bbox = None
+        id = None
+        score = None
+        
+    def get_objects(interpreter, min_confidence):
+        """Extracts detected objects from the output tensor."""
+        output_details = interpreter.get_output_details()
+        boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # Bounding boxes
+        classes = interpreter.get_tensor(output_details[1]['index'])[0]  # Class indices
+        scores = interpreter.get_tensor(output_details[2]['index'])[0]  # Confidence scores
+    
+        objs = []
+        for i in range(len(scores)):
+            if scores[i] >= min_confidence:
+                obj = DetectedObject()
+                bbox = boxes[i]
+                bbox = numpy.array([
+                    bbox[1],  # xmin
+                    bbox[0],  # ymin
+                    bbox[3],  # xmax
+                    bbox[2]   # ymax
+                ]) * 300                
+                
+                obj.bbox = bbox.tolist()
+                obj.id = int(classes[i])
+                obj.score = scores[i]
+                objs.append(obj)
+        return objs
 
 print("My PID is:", os.getpid())
-config = {
-    'object_framework': 'coral_edgetpu',
-    'object_min_confidence': .345,
-    # 'object_min_confidence': .45,
-    'tpu_max_processes': 1,
-    'object_weights': '/usr/local/cameramon/models/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite',
-    # 'object_weights': '/usr/local/cameramon/models/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite',
-    # 'object_weights': '/usr/local/cameramon/models/efficientdet_lite3x_640_ptq_edgetpu.tflite',
-    # 'object_weights': '/usr/local/cameramon/models/efficientdet_lite3_512_ptq_edgetpu.tflite',
-    # 'object_weights': '/usr/local/cameramon/models/efficientdet_lite1_384_ptq_edgetpu.tflite',
-    # 'object_weights': '/usr/local/cameramon/models/efficientdet_lite2_448_ptq_edgetpu.tflite',
-    'object_labels': '/usr/local/cameramon/models/coco_indexed.names',
-    'past_det_max_diff_area': .20,  # 20%
-    'max_detection_size': .3,  # 30%
-    'api_portal': 'https://watchman.brewstersoft.net/zm/api',
-}
 
 conf_ini = configparser.ConfigParser()
 MODULE_PATH = os.path.dirname(__file__)
@@ -104,7 +98,7 @@ labels = None
 zones = None
 car_zones = None
 logger = None
-prev_detections = defaultdict(list)
+trackers = defaultdict(list)
 detect_pattern = re.compile('(person|car|motorbike|bus|truck|boat|skateboard|horse|dog|cat)')
 interesting_objects = ("person", "bicycle", "car", "motorbike", "bus", "truck", "boat", "skateboard", "horse", "dog", "cat")
 LOG_LEVEL = logging.INFO
@@ -120,14 +114,17 @@ def init():
     init_logging()
 
     logger.info("Setting up model")
-    interpreter = make_interpreter(config['object_weights'])
+    try:
+        interpreter = make_interpreter(conf_ini['model']['object_weights'])
+    except:
+        interpreter = tf.lite.Interpreter(conf_ini['model']['object_weights'])
+
     interpreter.allocate_tensors()
-    labels = read_label_file(config['object_labels'])
+    labels = read_label_file(conf_ini['model']['object_labels'])
     inference_size = input_size(interpreter)
 
     logger.info("Loading Zones")
     zones, car_zones = load_zones(3)
-
 
 def init_logging():
     global logger
@@ -136,7 +133,7 @@ def init_logging():
     logger.setLevel(LOG_LEVEL)
 
     # File logging
-    handler = handlers.RotatingFileHandler('/var/log/cameramon.log',
+    handler = handlers.RotatingFileHandler('/var/log/cameramon/cameramon.log',
                                            maxBytes=1024000, backupCount=5)
     fmt = logging.Formatter(FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(fmt)
@@ -188,17 +185,87 @@ def run_inference(image):
     logger.debug(f"Detecting objects in image")
 
     h, w, channel = image.shape
-    input_tensor(interpreter)[:h, :w] = image
+    if coral_tpu:
+        # Direct data access
+        input_tensor(interpreter)[:h, :w] = image
+    else:
+        # Tensorflow CPU
+        tensor = input_tensor(interpreter)
+        tensor[:h, :w] = image
+    
+        input_details = interpreter.get_input_details()
+        
+        tensor = numpy.expand_dims(tensor, axis=0)
+        interpreter.set_tensor(input_details[0]['index'], tensor)
+    
     interpreter.invoke()
 
-    objs = get_objects(interpreter, config['object_min_confidence'])
+    objs = get_objects(interpreter, conf_ini['model']['min_conf'])
     return objs
 
+
+def update_trackers(frame):
+    """
+    Update existing trackers with the current frame.
+
+    Args:
+        frame: The current frame from the video stream.
+
+    Returns:
+        bool: True if any trackers were successfully updated, False otherwise.
+    """
+    update_time = time.time()
+    for class_id, tracker_list in list(trackers.items()):
+        for i in range(len(tracker_list) - 1, -1, -1):  # Iterate in reverse to allow safe removal
+            tracker = tracker_list[i]
+            if update_time - tracker.last_seen > 20:
+                # object hasn't been seen in the past second. Remove tracker
+                # Detection runs at something like 10 fps, so if not touched
+                # in a full second, that's 10 detections in a row where it 
+                # hasn't matched anything.
+                logger.warning("Stale tracker detected. Removing!")
+                trackers[class_id].pop(i)
+                continue
+                
+            success, updated_bbox = tracker.update(frame)
+
+            if not success:
+                logger.warning("Object gone. Removing from list")
+                # Tracker lost, remove it from the list
+                trackers[class_id].pop(i)
+
+
+def calculate_iou(shapeA, shapeB):
+    """
+    Calculate the Intersection over Union (IoU) between two Shapely geometries.
+
+    The IoU is a measure of the overlap between two shapes, calculated as the area of 
+    their intersection divided by the area of their union.
+
+    Parameters:
+    shapeA (shapely.geometry.Polygon or shapely.geometry.box): The first shape.
+    shapeB (shapely.geometry.Polygon or shapely.geometry.box): The second shape.
+
+    Returns:
+    float: The IoU value between shapeA and shapeB. A value of 1.0 means perfect overlap, 
+           while a value of 0.0 means no overlap.
+    """
+    # Calculate the intersection area
+    intersection_area = shapeA.intersection(shapeB).area
+
+    # Calculate the union area
+    union_area = shapeA.union(shapeB).area
+
+    # Return the IoU (Intersection over Union)
+    return intersection_area / union_area if union_area > 0 else 0
+
+clear_frames = 0
 def detect_image(image, img_ratio, img_area):
-    global prev_detections
+    global clear_frames
+    
+    update_trackers(image)
 
     logger.debug("Processing image for event")
-    match = None
     found_match = False
     canidate_objects = []
     
@@ -206,10 +273,13 @@ def detect_image(image, img_ratio, img_area):
     # print(objs)
 
     if not objs:
-        return (found_match, canidate_objects, match)
+        if clear_frames < 100:
+            clear_frames += 1
+        return (found_match, canidate_objects)
+    else:
+        clear_frames = 0
 
     new_detections = defaultdict(list)
-    past_det_threshold = 1 - config['past_det_max_diff_area']
 
     logger.debug("Object detection complete. Processing results")
 
@@ -231,9 +301,10 @@ def detect_image(image, img_ratio, img_area):
             continue  # Not an object of interest to us
 
         bbox_poly = box(*bbox)
+        detected_bbox = box(*item.bbox)
 
         poly_area = bbox_poly.area
-        if poly_area / img_area > config['max_detection_size']:
+        if poly_area / img_area > conf_ini['match']['max_det_size']:
             logger.debug(f"Ignoring {obj} {bbox_poly.bounds} as it is too large")
             continue
 
@@ -253,7 +324,7 @@ def detect_image(image, img_ratio, img_area):
         full_width = image.shape[1] * img_ratio
         vehicles = ('car', 'truck', 'bus')
         if obj in vehicles and bbox[2] > (full_width - 100):
-            logger.info(f"Got car in yard (bbox: {bbox}, image width: {full_width}). Ignoring.")
+            logger.debug(f"Got car in yard (bbox: {bbox}, image width: {full_width}). Ignoring.")
             continue
 
         # Good object, in our zones.
@@ -263,67 +334,61 @@ def detect_image(image, img_ratio, img_area):
         # And list as a canidate for alerting
         canidate_objects.append((obj, bbox, conf))
 
-        # See if this is a *new* match
-        if found_match:
-            # Don't bother checking if this is a repeat,
-            # we already found something that wasn't.
-            # Just store this match (above) and move on.
-            continue
-
         if obj in vehicles:
             # Compare to *any* vehicles we have seen, as it often gets confused
             comp_objects = (shape
                             for vehicle in vehicles
-                            for shape in prev_detections.get(vehicle, []))
+                            for shape in trackers.get(vehicle, []))
         else:
-            comp_objects = prev_detections.get(obj, []).copy()
-
-        for past_match in comp_objects:
-            intersect_area = past_match.intersection(bbox_poly).area
-            bbox_percent = intersect_area / bbox_poly.area
-            past_percent = intersect_area / past_match.area
-
-            logger.debug(f"bbox intersect area for object {obj}, {round(conf,2)}: {round(bbox_percent,2)} past percent: {round(past_percent,2)}")
-
-            if intersect_area != 0 and \
-               (bbox_percent > past_det_threshold and
-                    past_percent > past_det_threshold):
-                logger.debug(f"Ignoring {obj} {bbox} as we have already seen it")
-                break
-            # else:
-                # logger.info(f"bbox intersect area for object {obj} with conf {round(conf,2)}: {round(bbox_percent,2)}/{round(past_percent,2)}")
+            comp_objects = trackers.get(obj, []).copy()
+        
+        if not comp_objects:
+            max_iou = -1
         else:
-            # Didn't break out of for loop, therfore object didn't match
-            # *anything* in past objects
-            # This means it is a new, or moved, object.
-            logger.debug(f"Matching {obj} as it appears to be new or moved")
+            iou_results = {}
+            for idx, tracker in enumerate(comp_objects):
+                updated_bbox = tracker.bbox
+                # compare the detected object box to the current box from the tracker 
+                # to see if it is the same object.
+                iou = calculate_iou(detected_bbox, updated_bbox)
+                iou_results[idx] = iou
+                logger.debug(f"IoU for object {obj}, {conf:.2f}: {iou:.2f}")
+
+            best_tracker_idx = max(iou_results, key=iou_results.get)
+            tracker = comp_objects[best_tracker_idx]
+            max_iou = iou_results[best_tracker_idx]            
+            
+        if max_iou > 0.2:
+            tracker.touch()
+            if tracker.is_moving:  # Define your velocity threshold
+                logger.warning(f"Object {obj} has moved.")
+                found_match = True  # The object has moved                
+            break
+        else:
+            # IoU indicates no match, therfore new object.
+            logger.warning(f"Matching {obj} as it appears to be new. Max iou: {max_iou}")
             found_match = True
-            match = (obj, bbox_poly.bounds, conf)
+            new_tracker = Tracker()
+            new_tracker.init(image, detected_bbox)
+            trackers[obj].append(new_tracker)
+            
 
-    if found_match:
-        prev_detections = new_detections
-        print("***********Replaced prev_detections with new_detections")
-        obj, bbox_poly, conf = match
-        logger.info(f"Matched {obj} {bbox_poly} with conf. level {conf}")
-        logger.debug(f"All Objects: {list(zip(objects, confs, bboxes))}") 
-    
-    # for key, value in prev_detections.items():
-        # print(f"Stored {len(value)} objects of type {key}")
-    return (found_match, canidate_objects, match)
+    return (found_match, canidate_objects)
 
 
 def process_image(pil_image):
     if pil_image is None or not any(pil_image.size):
         raise TypeError("Image was not an image")
 
-    #print(f"Resized image to {inference_size} in {time.time() - t1}")
+    # t1 = time.time()
     resized_pil,target_ratio,img_area = resize_pil_image(pil_image)
-
+    # print(f"Resized image to {inference_size} in {time.time() - t1}")
+    
     opencv_image = numpy.asarray(resized_pil)
 
-    found_match, all_objects, match_info = detect_image(opencv_image, target_ratio, img_area)
+    found_match, all_objects = detect_image(opencv_image, target_ratio, img_area)
 
-    return (bool(found_match), all_objects, match_info, pil_image)
+    return (bool(found_match), all_objects)
 
 
 def resize_pil_image(pil_image): 
@@ -335,7 +400,7 @@ def resize_pil_image(pil_image):
 
     #t1 = time.time()
     new_size = (numpy.asarray(pil_image.size) // target_ratio).astype(int)
-    resized_pil = pil_image.resize(new_size, reducing_gap=2.0)
+    resized_pil = pil_image.resize(new_size.tolist(), reducing_gap=2.0)
     return (resized_pil, target_ratio, img_area)
 
 
@@ -349,20 +414,22 @@ def process_opencv_image(original_image):
     img_area = original_image.shape[0] * original_image.shape[1]
     logger.debug("Resizing image")
 
-    #t1 = time.time()
+    # t1 = time.time()
     new_size = (numpy.asarray(original_image.shape[:-1]) // target_ratio).astype(int)
     opencv_image = cv2.resize(original_image, new_size, interpolation = cv2.INTER_AREA)
-    #print(f"Resized image to {inference_size} in {time.time() - t1}")
+    # print(f"Resized image to {inference_size} in {time.time() - t1}")
 
     found_match, all_objects, match_info = detect_image(opencv_image, target_ratio, img_area)
 
     return (bool(found_match), all_objects, match_info, original_image)
 
 
-def save_image(objects, match, image):
+def save_image(objects, image):
     # convert image to an openCV image for editing
     if not isinstance(image, numpy.ndarray):
-        image = numpy.asarray(image)[:, :, ::-1].copy()
+        # No need to convert color channels., Since PIL was only used 
+        # for resizing, we just left them in the cv2 order. 
+        image = numpy.asarray(image).copy() 
     
     eventid = 1
     font = cv2.FONT_HERSHEY_TRIPLEX
@@ -397,7 +464,7 @@ def save_image(objects, match, image):
     note = f"<a href={image_link}> Detected:"
     for obj, bbox, conf in objects:
         detect_info['labels'].append(obj)
-        detect_info['confidences'].append(conf)
+        detect_info['confidences'].append(float(conf))
         logger.debug(f"Drawing images for {obj} ({conf}) at {bbox}")
         bbox = bbox.round().astype(int)
         detect_info['boxes'].append(bbox.tolist())
@@ -430,29 +497,222 @@ def save_image(objects, match, image):
     note += '</a>'
     return note
 
-def init_zm_stream():
-    url = 'http://localhost/zm/cgi-bin/nph-zms?monitor=3&scale=100&maxfps=30&buffer=1000&user=israel&pass=shanima81'
+t0 = None
+def init_video_stream():
+    global t0
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|max_delay;500000"    
+    url = 'rtsp://watchman.brewstersoft.net:8554/drivecam?fflags=nobuffer'
+    # url = 'http://localhost/zm/cgi-bin/nph-zms?monitor=3&scale=100&maxfps=30&buffer=1000&user=israel&pass=shanima81'
     cap = cv2.VideoCapture(url)
+    backend_name = cap.getBackendName()
+    print(f"Using backend: {backend_name}")
+    if backend_name == "GSTREAMER":
+        # Use a GStreamer pipeline to control buffering
+        pipeline = f"rtspsrc location={url} latency=0 ! decodebin ! videoconvert ! appsink max-buffers=1 drop=true"
+        cap.release()  # Release the previous VideoCapture
+        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        print("Configured GStreamer pipeline.")    
+    
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    cap.grab()
+    timestamp = cap.get(cv2.CAP_PROP_POS_MSEC)
+    t0 = (time.time() * 1000) - timestamp
+    logger.warning(f"Timestamp at first is: {timestamp}")    
     return cap
+
+class VideoCapture:
+    def __init__(self):
+        self.frame = None
+        self.lock = threading.Lock()
+        self.running = False
+        self._frame_available = threading.Event()
+        self._capture = init_video_stream()
+        self.running = True        
+        self.thread = threading.Thread(target=self.update, daemon=True)
+        self.thread.start()
+        
+    def update(self):
+        while self.running:
+            try:
+                ret, frame = self._capture.read()
+                if not ret:
+                    raise EOFError("Nothing to read")
+            except Exception:
+                logger.exception("Unable to retrieve zoneminder image")
+                self._capture.release()
+                time.sleep(5)
+                self._capture = init_video_stream()
+                logger.warning("Trying again...")
+                continue
+            
+            current_time = time.time() * 1000   # Convert current time to ms
+            delay = current_time - (t0 + self._capture.get(cv2.CAP_PROP_POS_MSEC))
+            if delay > 500:
+                # Reinitialize the video stream
+                logger.warning("Large delay detected. Re-initializing.")
+                self._capture.release()
+                self._capture = init_video_stream()
+                self._capture.grab()
+                continue
+            if delay > 300:
+                self._capture.grab()
+            # Yes, this logic means both will run if the delay is greater than 200.
+            if delay > 200:
+                self._capture.grab()
+                logger.warning(f"The current delay is: {delay}")
+            
+            with self.lock:
+                self.frame = frame
+                self._frame_available.set()
+                
+    def read(self, timeout=None):
+        try:
+            self._frame_available.wait(timeout)
+        except TimeoutError:
+            return (None, None)
+
+        with self.lock:
+            frame = (True, self.frame.copy()) if self.frame is not None else (False, None)
+            self._frame_available.clear()
+            return frame
+        
+    def stop(self):
+        self.running = False
+        self._capture.release()    
+  
+@lru_cache(maxsize=128)
+def get_diagonal_length(bbox: Polygon) -> float:
+    minx, miny, maxx, maxy = bbox.bounds
+    return math.dist((minx, miny), (maxx, maxy))
+
+class Tracker:
+    THRESHOLD_PERCENT = 0.15
+    KEYFRAME_INTERVAL = 60
+    
+    # params = cv2.TrackerKCF_Params()
+    # params.sigma = 0.3
+    # params.lambda_ = 0.0001
+    
+    def __init__(self):
+        # self._tracker = cv2.TrackerKCF_create(self.params)
+        self._tracker = cv2.TrackerCSRT_create()
+        self.is_moving = False
+        self._ref_bbox = None
+        self._bbox = None
+        self.last_seen = None
+        self._last_update = None
+        self._update_count = 0
+        self._motion_sum = 0
+        self._max_move = 0
+        self._last_ref_frame_time = None
+        
+        
+    def init(self, image, bounding_box: box):
+        minx, miny, maxx, maxy = bounding_box.bounds
+        width = int(maxx - minx)
+        height = int(maxy - miny)
+        bbox = (int(minx), int(miny), width, height)
+        
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        
+        self._tracker.init(image, bbox)
+        
+        self._bbox = bounding_box
+        self.last_seen = time.time()
+        self._last_update = time.time()
+    
+    def update(self, frame):
+        if time.time() - self._last_update < 0.1:
+            return (True, self._bbox)
+        
+        self._last_update = time.time()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        success, updated_bbox = self._tracker.update(frame)
+        if success:
+            x, y, w, h = updated_bbox
+            shapely_updated_bbox = box(x, y, x + w, y + h)
+            self._bbox = shapely_updated_bbox
+            if self._ref_bbox is None:
+                self._ref_bbox = shapely_updated_bbox
+                self._last_ref_frame_time = time.time()
+        else:
+            self._bbox = None
+
+        self._calc_motion()
+        return success, self._bbox
+    
+    def _calc_motion(self):
+        if self._bbox is None:
+            self.is_moving = False
+            return
+
+        ref_len = max(get_diagonal_length(self._ref_bbox),
+                      get_diagonal_length(self._bbox))
+        
+        dist_moved = self._ref_bbox.centroid.distance(self._bbox.centroid)
+        percent_moved = dist_moved / ref_len
+        
+        self._motion_sum += percent_moved
+        self._update_count += 1
+        self._max_move = max(self._max_move, percent_moved)
+        avg_movement = (self._motion_sum / self._update_count) * 100        
+
+        # DEBUGING CODE - CHANGE TO DEBUG LEVEL OR REMOVE IN PRODUCTION
+        if self._update_count % 120 == 0:
+            logger.warning(f"Avg Movement {avg_movement:.2f}% Max: {self._max_move * 100:.2f}")
+        #  END DEBUGGING CODE
+            
+        self.is_moving = percent_moved > self.THRESHOLD_PERCENT
+            
+        if self.is_moving or (
+            time.time() - self._last_ref_frame_time > self.KEYFRAME_INTERVAL
+            and avg_movement > 1 # percent
+            ):
+            if self.is_moving:
+                logger.warning(f"Object moved {percent_moved * 100:.2f}%")            
+            logger.warning("Updating reference frame")
+            self._ref_bbox = self._bbox
+            self._last_ref_frame_time = time.time()
+                
+            # Also reset average and max for good measure
+            self._max_move = self._motion_sum = 0
+            self._update_count = 0                
+    
+    def touch(self):
+        self.last_seen = time.time()
+        
+    @property
+    def bbox(self):
+        return self._bbox
 
 if __name__ == "__main__":
     init()
     last_detect = datetime.min
     print("Beginning monitoring loop")
+    cap = VideoCapture()
+    
+    frame_count = 0
+    frame_time = time.time()
     while True:
         t1 = time.time()
-        try:
-            snapshot = download_zm_image()
+        try:  
+            ret, snapshot = cap.read(timeout=5)
+            
+            # rgb_image = cv2.cvtColor(snapshot, cv2.COLOR_BGR2RGB)
+            # Convert to a PIL image for faster resizing
+            snapshot = Image.fromarray(snapshot)
+            # snapshot = download_zm_image()
         except Exception:
             # If we get some sort of an error, log it, wait 5 seconds, then try again
-            logger.exception("Unable to retrieve zoneminder image")
             time.sleep(5)
-            logger.warning("Trying again...")
             continue
 
-        matched, objects, matched_obj, image = process_image(snapshot)
-        #matched, objects, matched_obj, image = process_opencv_image(snapshot)
-
+        matched, objects = process_image(snapshot)
+        # matched, objects, matched_obj, image = process_opencv_image(snapshot)
+        # print(matched, objects, matched_obj)
+        
         if matched:
             # Check another image, pulled directly from the camera
             # logger.info("Matched object. Double-checking.")
@@ -462,40 +722,49 @@ if __name__ == "__main__":
             # logger.info(f"Double-checked in {time.time() - t_check} with result {confirm}")
             
             # if confirm:
-                logger.info("Matched object. Signaling monitor.")
+            logger.info("Matched object. Signaling monitor.")
+            try:
+                requests.get(conf_ini['action']['action_url'])
+            except Exception:
+                logger.exception("Unable to call video")
+                
+            mqtt_broker = conf_ini['action'].get('mqtt_broker', None)
+            if mqtt_broker:
+                mqtt_user = conf_ini['action'].get('mqtt_user', None)
+                mqtt_password = conf_ini['action'].get('mqtt_password', None)
+                auth = None
+                if mqtt_user and mqtt_password:
+                    auth={'username':mqtt_user, 'password':mqtt_password}
                 try:
-                    requests.get(conf_ini['action']['action_url'])
-                except Exception:
-                    logger.exception("Unable to call video")
-                    
-                mqtt_broker = conf_ini['action'].get('mqtt_broker', None)
-                if mqtt_broker:
-                    mqtt_user = conf_ini['action'].get('mqtt_user', None)
-                    mqtt_password = conf_ini['action'].get('mqtt_password', None)
-                    auth = None
-                    if mqtt_user and mqtt_password:
-                        auth={'username':mqtt_user, 'password':mqtt_password}
                     publish_mqtt.single('cameramon/object', payload='detected', 
-                                       hostname=mqtt_broker, 
-                                       client_id="cameramon",
-                                       auth=auth)
-    
-                if datetime.now() - last_detect > timedelta(seconds = 20):
-                    # Only save a new image if it has been more than 20 seconds
-                    # since the last object Detected.
-                    # Otherwise, it's probably the same object, just moved,
-                    # so no need for a new image.
-                    note = save_image(objects, matched_obj, image)
-                else:
-                    logger.info("Not saving image due to recent detection")
-    
-                last_detect = datetime.now()
-                time.sleep(2)  # Since we know there is motion/new object, we can wait
-                # a couple of seconds before checking again.
+                                   hostname=mqtt_broker, 
+                                   client_id="cameramon",
+                                   auth=auth)
+                except socket.timeout:
+                    logger.warning("Unable to post MQTT messge: Timeout")
+
+            if datetime.now() - last_detect > timedelta(seconds = 20):
+                # Only save a new image if it has been more than 20 seconds
+                # since the last object Detected.
+                # Otherwise, it's probably the same object, just moved,
+                # so no need for a new image.
+                note = save_image(objects, snapshot)
+            else:
+                logger.info("Not saving image due to recent detection")
+
+            last_detect = datetime.now()
 
         logger.debug(f"Ran detect loop in {time.time() - t1}")
         # print("Ran detect loop in", time.time() - t1)
 
+        frame_count += 1
+        elapsed_time = time.time() - frame_time
+        if elapsed_time > 10:
+            fps = frame_count / elapsed_time
+            print(f"FPS: {fps:.2f}")
+            frame_count = 0
+            frame_time = time.time()
+            
         # limit prcessing to 10 FPS
         if time.time() - t1 < .1:
             time.sleep(.1 - (time.time() - t1))
