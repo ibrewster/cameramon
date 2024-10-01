@@ -212,7 +212,7 @@ def detect_image(image, img_ratio, img_area):
             max_iou = 1
             tracker = comp_objects[0]
         else:
-            logging.warning(f"Comp objects is: {comp_objects}, Type: {type(comp_objects)}")
+            logging.debug(f"Comp objects is: {comp_objects}, Type: {type(comp_objects)}")
             iou_results = {}
             for idx, tracker in enumerate(comp_objects):
                 updated_bbox = tracker.bbox
