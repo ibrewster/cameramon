@@ -221,9 +221,13 @@ def detect_image(image, img_ratio, img_area):
                 iou_results[idx] = iou
                 logger.debug(f"IoU for object {obj}, {conf:.2f}: {iou:.2f}")
 
-            best_tracker_idx = max(iou_results, key=iou_results.get)
-            tracker = comp_objects[best_tracker_idx]
-            max_iou = iou_results[best_tracker_idx]
+            try:
+                best_tracker_idx = max(iou_results, key=iou_results.get)
+                tracker = comp_objects[best_tracker_idx]
+                max_iou = iou_results[best_tracker_idx]
+            except ValueError:
+                logger.warning(f"iou_results is empty! {iou_results}, {comp_objects}, Last iou: {iou}, detected_objs: {detected_objs}")
+                max_iou = -1
             
         if max_iou > config.getfloat('match', 'min_iou'):
             # if we have any overlap with an existing tracker, assume it is the same object.
