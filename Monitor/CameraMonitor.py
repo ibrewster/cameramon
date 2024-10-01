@@ -18,7 +18,7 @@ from shapely.geometry import box
 
 coral_tpu = False
 
-try:    
+try:
     from pycoral.adapters.common import input_size, input_tensor
     from pycoral.adapters.detect import get_objects
     from pycoral.utils.dataset import read_label_file
@@ -95,12 +95,12 @@ def update_trackers(frame):
             if update_time - tracker.last_seen > 20:
                 # object hasn't been seen in the past 20 seconds. Remove tracker
                 # Detection runs at something like 10 fps, so if not touched
-                # in a full second, that's 10 detections in a row where it 
+                # in a full second, that's 10 detections in a row where it
                 # hasn't matched anything.
                 logger.warning("Stale tracker detected. Removing!")
                 trackers[class_id].pop(i)
                 continue
-                
+
             success, updated_bbox = tracker.update(frame)
 
             if not success:
@@ -113,7 +113,7 @@ def calculate_iou(shapeA, shapeB):
     """
     Calculate the Intersection over Union (IoU) between two Shapely geometries.
 
-    The IoU is a measure of the overlap between two shapes, calculated as the area of 
+    The IoU is a measure of the overlap between two shapes, calculated as the area of
     their intersection divided by the area of their union.
 
     Parameters:
@@ -121,7 +121,7 @@ def calculate_iou(shapeA, shapeB):
     shapeB (shapely.geometry.Polygon or shapely.geometry.box): The second shape.
 
     Returns:
-    float: The IoU value between shapeA and shapeB. A value of 1.0 means perfect overlap, 
+    float: The IoU value between shapeA and shapeB. A value of 1.0 means perfect overlap,
            while a value of 0.0 means no overlap.
     """
     # Calculate the intersection area
@@ -133,13 +133,13 @@ def calculate_iou(shapeA, shapeB):
     # Return the IoU (Intersection over Union)
     return intersection_area / union_area if union_area > 0 else 0
 
-def detect_image(image, img_ratio, img_area):    
+def detect_image(image, img_ratio, img_area):
     update_trackers(image)
 
     logger.debug("Processing image for event")
     signal = False
     good_objects = []
-    
+
     detected_objs = run_inference(image)
     logger.debug(f"{detected_objs}")
 
@@ -178,13 +178,13 @@ def detect_image(image, img_ratio, img_area):
         check_zones = car_zones if obj in ['car', 'truck'] else zones
         zone_name = "car zones" if check_zones is car_zones else "zones"
         logger.debug(f"Checking object of type {obj} against zones {zone_name}")
-        
+
         # If the object is not inside our zones of interest, ignore it.
         if not check_zones.intersects(bbox_poly):
             logger.debug(f"Ignoring {obj} {bbox_poly.bounds} as it is outside our zones")
             continue
-        
-        # If the object is a car or truck, and it is mostly in the yard, ignore it even if 
+
+        # If the object is a car or truck, and it is mostly in the yard, ignore it even if
         # it pokes into the driveway
         full_width = image.shape[1] * img_ratio
         vehicles = ('car', 'truck', 'bus')
@@ -197,38 +197,36 @@ def detect_image(image, img_ratio, img_area):
 
         if obj in vehicles:
             # Compare to *any* vehicles we have seen, as it often gets confused
-            comp_objects = (shape
+            comp_objects = [shape
                             for vehicle in vehicles
-                            for shape in trackers.get(vehicle, []))
+                            for shape in trackers.get(vehicle, [])]
         else:
             comp_objects = trackers.get(obj, []).copy()
-        
+
         if not comp_objects:
             # No trackers for this type of object
             max_iou = -1
         elif len(detected_objs) == 1 and len(comp_objects) == 1:
-            # If there is only a single object detected, and only a single 
+            # If there is only a single object detected, and only a single
             # tracker for this type of object, assume they are the same.
             max_iou = 1
             tracker = comp_objects[0]
         else:
+            logging.warning(f"Comp objects is: {comp_objects}, Type: {type(comp_objects)}")
             iou_results = {}
             for idx, tracker in enumerate(comp_objects):
                 updated_bbox = tracker.bbox
-                # compare the detected object box to the current box from the tracker 
+                # compare the detected object box to the current box from the tracker
                 # to see if it is the same object.
                 iou = calculate_iou(detected_bbox, updated_bbox)
                 iou_results[idx] = iou
                 logger.debug(f"IoU for object {obj}, {conf:.2f}: {iou:.2f}")
 
-            try:
-                best_tracker_idx = max(iou_results, key=iou_results.get)
-                tracker = comp_objects[best_tracker_idx]
-                max_iou = iou_results[best_tracker_idx]
-            except ValueError:
-                logger.warning(f"iou_results is empty! {iou_results}, {comp_objects}, Last iou: {iou}, detected_objs: {detected_objs}")
-                max_iou = -1
-            
+            best_tracker_idx = max(iou_results, key=iou_results.get)
+            tracker = comp_objects[best_tracker_idx]
+            max_iou = iou_results[best_tracker_idx]
+
+
         if max_iou > config.getfloat('match', 'min_iou'):
             # if we have any overlap with an existing tracker, assume it is the same object.
             # In the event of multiple matches, the one with the most overlap will be used.
@@ -256,7 +254,7 @@ def process_image(pil_image):
     t1 = time.time()
     resized_pil,target_ratio,img_area = resize_pil_image(pil_image)
     logger.debug(f"Resized image to {inference_size} in {time.time() - t1}")
-    
+
     opencv_image = numpy.asarray(resized_pil)
 
     found_match, all_objects = detect_image(opencv_image, target_ratio, img_area)
@@ -264,7 +262,7 @@ def process_image(pil_image):
     return (bool(found_match), all_objects)
 
 
-def resize_pil_image(pil_image): 
+def resize_pil_image(pil_image):
     target_ratio = max(pil_image.size[0] / inference_size[0],
                        pil_image.size[1] / inference_size[1])
 
@@ -279,10 +277,10 @@ def resize_pil_image(pil_image):
 def save_image(objects, image):
     # convert image to an openCV image for editing, if needed
     if not isinstance(image, numpy.ndarray):
-        # No need to convert color channels. Since PIL was only used 
-        # for resizing, we just left them in the cv2 order. 
+        # No need to convert color channels. Since PIL was only used
+        # for resizing, we just left them in the cv2 order.
         image = numpy.asarray(image).copy()
-    
+
     eventid = 1
     font = cv2.FONT_HERSHEY_TRIPLEX
     font_scale = .75
@@ -354,12 +352,12 @@ def main():
     last_detect = datetime.min
     print("Beginning monitoring loop")
     cap = VideoCapture()
-    
+
     frame_count = 0
     frame_time = time.time()
     while True:
         t1 = time.time()
-        try:  
+        try:
             ret, snapshot = cap.read(timeout=5)
 
             # Convert to a PIL image for faster resizing
@@ -371,14 +369,14 @@ def main():
 
         matched, objects = process_image(snapshot)
         logger.debug(f"{matched}, {objects}")
-        
+
         if matched:
             logger.info("Matched object. Signaling monitor.")
             try:
                 requests.get(config['action']['action_url'])
             except Exception:
                 logger.exception("Unable to call video")
-                
+
             mqtt_broker = config['action'].get('mqtt_broker', None)
             if mqtt_broker:
                 mqtt_user = config['action'].get('mqtt_user', None)
@@ -387,8 +385,8 @@ def main():
                 if mqtt_user and mqtt_password:
                     auth={'username':mqtt_user, 'password':mqtt_password}
                 try:
-                    publish_mqtt.single('cameramon/object', payload='detected', 
-                                   hostname=mqtt_broker, 
+                    publish_mqtt.single('cameramon/object', payload='detected',
+                                   hostname=mqtt_broker,
                                    client_id="cameramon",
                                    auth=auth)
                 except socket.timeout:
@@ -414,7 +412,7 @@ def main():
             logger.info(f"FPS: {fps:.2f}")
             frame_count = 0
             frame_time = time.time()
-            
+
         # limit prcessing to 10 FPS
         if time.time() - t1 < .1:
             time.sleep(.1 - (time.time() - t1))
