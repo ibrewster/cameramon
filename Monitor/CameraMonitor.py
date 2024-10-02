@@ -140,7 +140,9 @@ def detect_image(image, img_ratio, img_area):
     signal = False
     good_objects = []
     
+    t_inf = time.time()
     detected_objs = run_inference(image)
+    logger.info(f"Ran inverence in: {time.time() - t_inf}")
     logger.debug(f"{detected_objs}")
 
     if not detected_objs:
