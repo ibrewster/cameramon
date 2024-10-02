@@ -19,7 +19,7 @@ def init_video_stream():
     global t0
     # Set FFMPEG options to minimize delay and eliminate buffering 
     # so we always get the most recent frame (hopefully)
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|probesize;65536|analyzeduration;100000|framedrop;1|flags;low_delay|fflags;nobuffer"
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|probesize;65536|analyzeduration;200000|framedrop;1|flags;low_delay|fflags;nobuffer"
     url = config['frame']['rtsp_source']
 
     cap = cv2.VideoCapture(url)
