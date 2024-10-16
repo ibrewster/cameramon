@@ -59,12 +59,13 @@ class Notifier:
                     print("Posted MQTT Notification")
                 else:
                     print(f"Failed posting MQTT notification. Result: {result}")
-            try:
-                result = requests.get('http://10.27.81.71:5000/camview')
-                result.raise_for_status()
-                print("URL notified")
-            except Exception as e:
-                print(f"Unable to call URL: {e}")  
+                    
+            # try:
+                # result = requests.get('http://10.27.81.71:5000/camview')
+                # result.raise_for_status()
+                # print("URL notified")
+            # except Exception as e:
+                # print(f"Unable to call URL: {e}")  
         
     def __call__(self):
         self._notify.set()
