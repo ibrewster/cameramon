@@ -105,6 +105,7 @@ def on_disconnect(client, userdata, disconnect_flags, reason, properties):
             logging.info(f"Retrying MQTT connection (attempt {i+1}/{max_retries})")
             client.reconnect()
             if client.is_connected():
+                logging.info("Reconnect attempt succeeded.")
                 break
             else:
                 rc = client.reconnect_result()
@@ -115,8 +116,11 @@ def on_disconnect(client, userdata, disconnect_flags, reason, properties):
             retry_delay *= 2  # Exponential backoff
         else:
             logging.error("Failed to reconnect to MQTT broker after multiple attempts")
+            raise SystemExit("Unable to connect to MQTT broker")
     else:
         logging.critical(f"Fatal error: Disconnected from MQTT broker: {reason}. Not retrying.")
+        raise SystemExit("Unable to connect to MQTT broker")
+
     
 def on_connect(client, userdata, flags, rc, properties):
     if rc == 0:
