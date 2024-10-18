@@ -3,9 +3,9 @@ import logging
 import threading
 import time
 
-import requests
-
 from paho.mqtt import client as mqtt_client
+
+LOG_LEVEL = logging.INFO
 
 class FrigateObject:
     def __init__(self, item_id, item_type):
@@ -39,7 +39,7 @@ class Notifier:
         self._mqtt = mqtt_client
         
     def _notify_loop(self):
-        print("Running notify thread")
+        logging.info("Starting notify thread")
         while True:
             self._notify.wait()
             self._notify.clear()
@@ -56,16 +56,16 @@ class Notifier:
                 result = self._mqtt.publish('cameramon/object', 'detected')
                 status = result[0]
                 if status == 0:
-                    print("Posted MQTT Notification")
+                    logging.info("Posted MQTT Notification")
                 else:
-                    print(f"Failed posting MQTT notification. Result: {result}")
+                    logging.warning(f"Failed posting MQTT notification. Result: {result}")
                     
             # try:
                 # result = requests.get('http://10.27.81.71:5000/camview')
                 # result.raise_for_status()
-                # print("URL notified")
+                # logging.info("URL notified")
             # except Exception as e:
-                # print(f"Unable to call URL: {e}")  
+                # logging.warning(f"Unable to call URL: {e}")  
         
     def __call__(self):
         self._notify.set()
@@ -78,45 +78,51 @@ notify = Notifier()
 
 def MotionMonitor():
     # Run a loop to send notifications periodically while anything is moving.
-    print("Starting motion monitor thread")
+    logging.info("Starting motion monitor thread")
     while True:
         time.sleep(2)
         for item in known_objects.values():
             if item.moving:
-                print("MOVING: One or more objects is moving. Notifying.")
+                logging.info("MOVING: One or more objects is moving. Notifying.")
                 notify()
                 continue
-    print("Motion monitoring terminated")
+    logging.info("Motion monitoring terminated")
 
 FIRST_RECONNECT_DELAY = 1
 RECONNECT_RATE = 2
 MAX_RECONNECT_COUNT = 12
 MAX_RECONNECT_DELAY = 60
     
-def on_disconnect(client, userdata, rc):
-    logging.info("Disconnected with result code: %s", rc)
-    reconnect_count, reconnect_delay = 0, FIRST_RECONNECT_DELAY
-    while reconnect_count < MAX_RECONNECT_COUNT:
-        logging.info("Reconnecting in %d seconds...", reconnect_delay)
-        time.sleep(reconnect_delay)
-
-        try:
+def on_disconnect(client, userdata, disconnect_flags, reason, properties, rc):
+    # Determine if the disconnect reason might be resolved with a retry
+    retryable_flags = [0, 2, 3, 6, 7, 16]
+    if disconnect_flags in retryable_flags:
+        logging.warning(f"Disconnected from MQTT broker: {reason}")
+        # Retry a fixed number of times with a variable delay
+        max_retries = 3
+        retry_delay = 1
+        for i in range(max_retries):
+            logging.info(f"Retrying MQTT connection (attempt {i+1}/{max_retries})")
             client.reconnect()
-            logging.info("Reconnected successfully!")
-            return
-        except Exception as err:
-            logging.error("%s. Reconnect failed. Retrying...", err)
-
-        reconnect_delay *= RECONNECT_RATE
-        reconnect_delay = min(reconnect_delay, MAX_RECONNECT_DELAY)
-        reconnect_count += 1
-    logging.info("Reconnect failed after %s attempts. Exiting...", reconnect_count)
+            if client.is_connected():
+                break
+            else:
+                rc = client.reconnect_result()
+                error_string = mqtt_client.error_string(rc)
+                logging.warning(f"Retry attempt {i+1} failed. Reason: {error_string}")
+                
+            time.sleep(retry_delay)
+            retry_delay *= 2  # Exponential backoff
+        else:
+            logging.error("Failed to reconnect to MQTT broker after multiple attempts")
+    else:
+        logging.critical(f"Fatal error: Disconnected from MQTT broker: {reason}. Not retrying.")
     
 def on_connect(client, userdata, flags, rc, properties):
     if rc == 0:
-        print("Connected to MQTT Broker.")
+        logging.info("Connected to MQTT Broker.")
     else:
-        print("Failed to connet, return code:", rc)
+        logging.warning("Failed to connet, return code: %s", mqtt_client.error_string(rc))
 
 def connect_mqtt():
     broker = 'conductor.brewstersoft.net'
@@ -124,7 +130,10 @@ def connect_mqtt():
     username = 'hamqtt'
     password = 'Sh@nima821'
     
-    client = mqtt_client.Client(client_id=client_id, callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2)
+    client = mqtt_client.Client(
+        client_id=client_id,
+        callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2
+    )
     client.username_pw_set(username, password)
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
@@ -139,11 +148,15 @@ def on_message(client, userdata, msg):
     item_id = after['id']
     item_type = after['label']
     
+    # Make sure this isn't a false positive. Ignore it if so.
+    if after['false_positive'] == True:
+        return
+    
     # See if we need to remove this object (end time set)
     if after['end_time'] is not None:
         try:
             del known_objects[item_id]
-            print(f"Removed item id: {item_id} of type: {item_type}")            
+            logging.info(f"Removed item id: {item_id} of type: {item_type}")            
         except KeyError:
             pass
         return
@@ -152,16 +165,16 @@ def on_message(client, userdata, msg):
     if item_id not in known_objects:
         if not after['current_zones']:
             # ignore the object if not in any zones
-            # print(f"Ignoring {item_type} as it is not in the zones")
+            logging.debug(f"Ignoring {item_type} as it is not in the zones")
             return
         
         # add the object to our list
-        print(f"NEW {item_type}: Adding {item_type} to the tracked list")
+        logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} to the tracked list")
         obj = FrigateObject(item_id, item_type)
         known_objects[item_id] = obj
         
         if 'box' in after['attributes']:
-            print("!!!PACKAGE DELIVERY!!!")
+            logging.info("!!!PACKAGE DELIVERY!!!")
             
         notify()
 
@@ -169,10 +182,26 @@ def on_message(client, userdata, msg):
         # if existing object, update motion. Also updates "new" objects, so DRY
         known_objects[item_id].moving = not after['stationary']
     except KeyError:
-        print(f"Unable to update object of type {item_type} as it is not in the known_objects dict!")
+        logging.warning(f"Unable to update object of type {item_type} as it is not in the known_objects dict!")
     
 
 if __name__ == "__main__":
+    # configure logging
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(LOG_LEVEL)  # Ensure the handler level is set correctly
+    formatter = logging.Formatter(
+        "%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    stream_handler.setFormatter(formatter)
+
+    # Get the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(LOG_LEVEL)  # Set the root logger level
+    root_logger.handlers = [stream_handler]  # Replace existing handlers with the new one
+
+    logging.info("Starting monitoring")
+    
     # Set up the motion notifier
     motion_thread = threading.Thread(target=MotionMonitor, daemon=True)
     motion_thread.start()
