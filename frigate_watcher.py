@@ -93,7 +93,7 @@ RECONNECT_RATE = 2
 MAX_RECONNECT_COUNT = 12
 MAX_RECONNECT_DELAY = 60
     
-def on_disconnect(client, userdata, disconnect_flags, reason, properties, rc):
+def on_disconnect(client, userdata, disconnect_flags, reason, properties):
     # Determine if the disconnect reason might be resolved with a retry
     retryable_flags = [0, 2, 3, 6, 7, 16]
     if disconnect_flags in retryable_flags:
