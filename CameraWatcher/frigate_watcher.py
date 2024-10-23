@@ -155,19 +155,23 @@ def connect_mqtt():
     return client
 
 # Function to get a snapshot from Frigate
-def get_snapshot(annotated=False):
+def get_snapshot(camera_name=CAMERA_NAME, annotated=False):
     # Determine the appropriate URL for the snapshot
     url = f"http://watchman.brewstersoft.net:5005/api/{CAMERA_NAME}/latest.jpg"
-    if annotated:
-        url += "?annotated=1"
+    params = {
+        'bbox': '1' if annotated else '0',  # Bounding box for annotations
+        'h': '1080'  # Image height
+    }
     
     # Request the snapshot
-    response = requests.get(url)
-    
-    if response.status_code == 200:
-        return response.content
-    else:
-        logging.error(f"Error retrieving snapshot: {response.status_code}")
+    try:
+        # Make the request with the query parameters
+        response = requests.get(url, params=params)
+        response.raise_for_status()  # Raise an error for bad responses
+        logging.info(f"Snapshot retrieved from {camera_name} (annotated: {annotated})")
+        return response.content  # Return image data
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to get snapshot from {camera_name}: {e}")
         return None
     
 def gen_json():
