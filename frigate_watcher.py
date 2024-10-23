@@ -1,13 +1,18 @@
 import json
 import logging
 import os
+import requests
 import threading
 import time
+
+from datetime import datetime
 
 from paho.mqtt import client as mqtt_client
 
 LOG_LEVEL = logging.INFO
-FILE_OUT = '/data/cameramon/frigate'
+FILE_DIR = '/data/cameramon'
+# FILE_DIR = '/Users/israel/Desktop/cameramon'
+CAMERA_NAME = 'drivecam'
 
 class FrigateObject:
     def __init__(self, item_id, item_type):
@@ -147,6 +152,51 @@ def connect_mqtt():
     client.connect(broker)
     return client
 
+# Function to get a snapshot from Frigate
+def get_snapshot(annotated=False):
+    # Determine the appropriate URL for the snapshot
+    url = f"http://watchman.brewstersoft.net:5005/api/{CAMERA_NAME}/latest.jpg"
+    if annotated:
+        url += "?annotated=1"
+    
+    # Request the snapshot
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        return response.content
+    else:
+        logging.error(f"Error retrieving snapshot: {response.status_code}")
+        return None
+    
+def save_annotations(item_id, json_payload):
+    json_dir = os.path.join(FILE_DIR, 'frigate')
+    os.makedirs(json_dir, exist_ok=True)
+    json_file = os.path.join(json_dir, f"{item_id}.json")
+    with open(json_file, 'w') as file:
+        file.write(json_payload)
+        
+    now = datetime.now()
+    img_dir = os.path.join(FILE_DIR, CAMERA_NAME, now.strftime('%Y-%m-%d'))
+    os.makedirs(img_dir, exist_ok=True)
+    
+    time_str = now.strftime('%H-%M-%S')
+    annotated_filename = os.path.join(img_dir, f"{time_str}_objdetect.jpg")
+    clean_filename = os.path.join(img_dir, f"{time_str}_clean.jpg")
+    
+    annotated_snapshot = get_snapshot(annotated=True)
+    if annotated_snapshot:
+        with open(annotated_filename, 'wb') as annotated_file:
+            annotated_file.write(annotated_snapshot)
+        logging.info(f"Annotated snapshot saved to: {annotated_filename}")
+    
+    # Get clean snapshot
+    clean_snapshot = get_snapshot(annotated=False)
+    if clean_snapshot:
+        with open(clean_filename, 'wb') as clean_file:
+            clean_file.write(clean_snapshot)
+        logging.info(f"Clean snapshot saved to: {clean_filename}")    
+    
+
 def on_message(client, userdata, msg):
     json_payload = msg.payload.decode()
     payload = json.loads(json_payload)
@@ -175,8 +225,7 @@ def on_message(client, userdata, msg):
             return
         
         # Save the payload
-        with open(os.path.join(FILE_OUT, f"{item_id}.json"), 'w') as file:
-            file.write(json_payload)
+        save_annotations(item_id, json_payload)
             
         # add the object to our list
         logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
@@ -211,7 +260,7 @@ if __name__ == "__main__":
     root_logger.handlers = [stream_handler]  # Replace existing handlers with the new one
 
     logging.info("Starting monitoring")
-    os.makedirs(FILE_OUT, exist_ok=True)
+    os.makedirs(FILE_DIR, exist_ok=True)
     
     # Set up the motion notifier
     motion_thread = threading.Thread(target=MotionMonitor, daemon=True)
