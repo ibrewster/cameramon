@@ -34,7 +34,7 @@ def list_monitors():
             except ValueError:
                 continue # Not a valid event dir
             
-            events = glob.glob(os.path.join(event_path, event_dir, "*.jpg"))
+            events = glob.glob(os.path.join(event_path, event_dir, "*_objdetect.jpg"))
             event_count = len(events)
             age = (now - event_date).total_seconds() / 60 / 60  # hours
             if age < 24:
