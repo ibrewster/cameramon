@@ -67,7 +67,7 @@ def list_events():
         event_date = datetime.strptime(date, "%Y-%m-%d")
         event_age = (now - event_date).total_seconds() / 60 / 60
         if max_age is None or event_age < max_age:
-            for event in sorted(glob.glob(os.path.join(event_path, date, "*.jpg")), reverse = True):
+            for event in sorted(glob.glob(os.path.join(event_path, date, "*_objdetect.jpg")), reverse = True):
                 img_name = os.path.basename(event)
                 event_name = img_name[:8]
                 event_info_file = event_name + "_objects.json"
