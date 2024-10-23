@@ -179,7 +179,7 @@ def on_message(client, userdata, msg):
             file.write(json_payload)
             
         # add the object to our list
-        logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id}to the tracked list")
+        logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
         obj = FrigateObject(item_id, item_type)
         known_objects[item_id] = obj
         
