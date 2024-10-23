@@ -29,7 +29,11 @@ def list_monitors():
         monitors[camera]['event_path'] = event_path
         events = os.listdir(event_path)
         for event_dir in events:
-            event_date = datetime.strptime(event_dir, "%Y-%m-%d")
+            try:
+                event_date = datetime.strptime(event_dir, "%Y-%m-%d")
+            except ValueError:
+                continue # Not a valid event dir
+            
             events = glob.glob(os.path.join(event_path, event_dir, "*.jpg"))
             event_count = len(events)
             age = (now - event_date).total_seconds() / 60 / 60  # hours
