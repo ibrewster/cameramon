@@ -1,11 +1,13 @@
 import json
 import logging
+import os
 import threading
 import time
 
 from paho.mqtt import client as mqtt_client
 
 LOG_LEVEL = logging.INFO
+FILE_OUT = '/data/cameramon/frigate'
 
 class FrigateObject:
     def __init__(self, item_id, item_type):
@@ -146,8 +148,8 @@ def connect_mqtt():
     return client
 
 def on_message(client, userdata, msg):
-    payload = msg.payload.decode()
-    payload = json.loads(payload)
+    json_payload = msg.payload.decode()
+    payload = json.loads(json_payload)
     after = payload['after']
     item_id = after['id']
     item_type = after['label']
@@ -167,6 +169,10 @@ def on_message(client, userdata, msg):
 
     # see if this is a new object
     if item_id not in known_objects:
+        # Save the payload
+        with open(os.path.join(FILE_OUT, f"{item_id}.json"), 'w') as file:
+            file.write(json_payload)
+        
         if not after['current_zones']:
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
@@ -205,6 +211,7 @@ if __name__ == "__main__":
     root_logger.handlers = [stream_handler]  # Replace existing handlers with the new one
 
     logging.info("Starting monitoring")
+    os.makedirs(FILE_OUT, exist_ok=True)
     
     # Set up the motion notifier
     motion_thread = threading.Thread(target=MotionMonitor, daemon=True)
