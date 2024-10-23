@@ -15,10 +15,12 @@ FILE_DIR = '/data/cameramon'
 CAMERA_NAME = 'drivecam'
 
 class FrigateObject:
-    def __init__(self, item_id, item_type):
+    def __init__(self, payload):
         self._moving = False
-        self.id = item_id
-        self.type = item_type
+        self.id = payload['id']
+        self.type = payload['label']
+        self.conf = payload['score']
+        self.box = payload['box']
         
     @property
     def is_moving(self) -> bool:
@@ -58,7 +60,7 @@ class Notifier:
                     continue
             
                 self._last_notification = cur_time
-                
+        
             if self._mqtt:
                 result = self._mqtt.publish('cameramon/object', 'detected')
                 status = result[0]
@@ -168,12 +170,33 @@ def get_snapshot(annotated=False):
         logging.error(f"Error retrieving snapshot: {response.status_code}")
         return None
     
-def save_annotations(item_id, json_payload):
+def gen_json():
+    detect_info = {
+        'labels': [],
+        'boxes': [],
+        'frame_id': 'snapshot',
+        'confidences': [],
+        'image_dimensions': {
+            'original': [1920, 1080],
+            'resized': [1920, 1080],
+        },
+    }
+    
+    for obj in known_objects.values():
+        detect_info['labels'].append(obj.type)
+        detect_info['confidences'].append(obj.conf)
+        detect_info['boxes'].append(obj.box)
+        
+    return detect_info
+        
+def save_annotations(payload):
+    item_id = payload['after']['id']
+    
     json_dir = os.path.join(FILE_DIR, 'frigate')
     os.makedirs(json_dir, exist_ok=True)
     json_file = os.path.join(json_dir, f"{item_id}.json")
     with open(json_file, 'w') as file:
-        file.write(json_payload)
+        json.dump(payload, file)
         
     now = datetime.now()
     img_dir = os.path.join(FILE_DIR, CAMERA_NAME, now.strftime('%Y-%m-%d'))
@@ -182,12 +205,16 @@ def save_annotations(item_id, json_payload):
     time_str = now.strftime('%H-%M-%S')
     annotated_filename = os.path.join(img_dir, f"{time_str}_objdetect.jpg")
     clean_filename = os.path.join(img_dir, f"{time_str}_clean.jpg")
+    json_filename = os.path.join(img_dir, f"{time_str}_objects.json")
     
     annotated_snapshot = get_snapshot(annotated=True)
     if annotated_snapshot:
         with open(annotated_filename, 'wb') as annotated_file:
             annotated_file.write(annotated_snapshot)
         logging.info(f"Annotated snapshot saved to: {annotated_filename}")
+        
+        with open(json_filename, 'w') as jf:
+            json.dump(gen_json(), jf)
     
     # Get clean snapshot
     clean_snapshot = get_snapshot(annotated=False)
@@ -200,6 +227,7 @@ def save_annotations(item_id, json_payload):
 def on_message(client, userdata, msg):
     json_payload = msg.payload.decode()
     payload = json.loads(json_payload)
+    
     after = payload['after']
     item_id = after['id']
     item_type = after['label']
@@ -223,14 +251,15 @@ def on_message(client, userdata, msg):
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
             return
-        
-        # Save the payload
-        save_annotations(item_id, json_payload)
+    
             
         # add the object to our list
         logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
-        obj = FrigateObject(item_id, item_type)
+        obj = FrigateObject(after)
         known_objects[item_id] = obj
+        
+        # Save the payload
+        save_annotations(payload)        
         
         if 'box' in after['attributes']:
             logging.info("!!!PACKAGE DELIVERY!!!")
