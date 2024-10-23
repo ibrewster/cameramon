@@ -1,4 +1,4 @@
-from cameramon import app
+from CameraWatcher import app
 
 if __name__ == "__main__":
     app.config['TEMPLATES_AUTO_RELOAD'] = True
