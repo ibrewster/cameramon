@@ -53,9 +53,83 @@ def get_config_path(args):
           "No config.py found in script directory and -c flag not provided."
       )
 
+class WaitSet(set):
+    """
+    A thread-safe set that provides a mechanism to wait for items to be added.
+
+    This class extends the built-in `set` to include functionality that allows
+    waiting for an item to be added to the set. It uses a multiprocessing Event
+    to signal when an item is added. If the set is empty when `wait()` is called,
+    it will block until an item is added.
+
+    Methods:
+        add(item):
+            Adds an item to the set and sets the event flag.
+
+        remove(item):
+            Removes an item from the set and clears the event flag if the set is empty.
+
+        discard(item):
+            Removes an item from the set if it exists, and clears the event flag if the set is empty.
+
+        wait() -> bool:
+            Blocks until an item is added to the set, returning True if the set is not empty.
+
+        clear():
+            Clears the set and the event flag.
+
+    Example:
+        >>> my_set = WaitSet()
+        >>> my_set.add(1)
+        >>> my_set.wait()  # Returns True immediately since 1 is in the set
+        >>> my_set.remove(1)
+        >>> my_set.wait()  # Blocks until an item is added again
+    """
+    def __init__(self):
+        super().__init__()
+        self._event = threading.Event()
+
+    def add(self, item):
+        super().add(item)
+        self._event.set()
+
+    def remove(self, item):
+        super().remove(item)  # Call the parent class's remove method
+        self._check_empty()
+
+    def discard(self, item):
+        super().discard(item)  # Call the parent class's discard method
+        self._check_empty()
+
+    def wait(self, timeout=None):
+        """Wait until the set is not empty, or until timeout occurs.
+
+        Args:
+            timeout (float): The maximum time to wait in seconds. If None, will block indefinitely.
+
+        Returns:
+            bool: True if the set is not empty, False if the timeout occurred.
+        """
+        # If the set is not empty, return True immediately
+        if self:
+            return True
+
+        # Block until an item is added
+        return self._event.wait(timeout)
+
+    def clear(self):
+        super().clear()  # Clear the set
+        self._event.clear()  # Clear the event flag
+
+    def _check_empty(self):
+        # Clear the event if the set is empty
+        if not self:
+            self._event.clear()  # Clear the event flag if the set is empty
+
 class FrigateObject:
     def __init__(self, payload):
-        self._moving = not payload['stationary']
+        self._moving = False # default to false
+        self.is_moving = not payload['stationary']
         self.id = payload['id']
         self.type = payload['label']
         self.conf = payload['score']
@@ -69,8 +143,12 @@ class FrigateObject:
     def is_moving(self, value: bool) -> None:
         if not type(value) == bool:
             raise ValueError("Value for Moving must be a boolean!")
+
         if value is True and self._moving == False:
             notify() # Notify immediately upon object starting motion
+            moving_objects.add(self.id)
+        elif not value and self._moving:
+            moving_objects.discard(self.id)
 
         self._moving = value
 
@@ -78,7 +156,7 @@ class FrigateObject:
         if payload['id'] != self.id or payload['label'] != self.type:
             raise ValueError("Cannot update ID or type of an existing object")
 
-        self._moving = not payload['stationary']
+        self.is_moving = not payload['stationary']
         self.conf = payload['score']
         self.box = payload['box']
 
@@ -151,22 +229,36 @@ class Notifier:
         notification = (camera_name, obj_type, detection_type, confidence)
         self._queue.put(notification)
 
-known_objects = {
-    # Key: object id. Value: object object
-}
-
-notify = Notifier()
-
 def MotionMonitor():
+    """
+    Monitors the movement status of objects and sends notifications when any object is moving.
+
+    This function runs in a separate thread and follows these key behaviors:
+    - Waits for any objects to be marked as moving. If no objects are moving, it will not perform any checks.
+    - Once any object is detected as moving, it will notify every 2 seconds about the moving objects.
+    - If an object is removed from the known objects, it is also removed from the set of moving objects for safety.
+    - Ensures that notifications are only sent for valid objects, handling any discrepancies in object status gracefully.
+
+    The function will run indefinitely until explicitly terminated.
+    """
     # Run a loop to send notifications periodically while anything is moving.
     logging.info("Starting motion monitor thread")
     while True:
-        time.sleep(2)
-        for item in known_objects.values():
-            if item.is_moving:
-                logging.info("MOVING: One or more objects is moving. Notifying.")
+        moving_objects.wait() # Do nothing unless something is moving.
+
+        for _id in moving_objects:
+            item = moving_objects.get(_id)
+            if item is not None:
                 notify(item.type, 'motion', item.conf)
-                continue
+                logging.info("MOVING: One or more objects is moving. Notifying.")
+            else:
+                # if item does not exist in known_objects, it should not be in moving_objects
+                # It should have been removed elsewhere, but go ahead and remove it here
+                logging.warning(f"Orphaned item id {_id} found in moving_objects. Discarding it.")
+                moving_objects.discard(item)
+
+        time.sleep(2) # Throttle this loop to run not more often than once every two seconds.
+
     logging.info("Motion monitoring terminated")
 
 def on_disconnect(client, userdata, disconnect_flags, reason, properties):
@@ -314,6 +406,7 @@ def on_message(client, userdata, msg):
     if after['end_time'] is not None:
         try:
             del known_objects[item_id]
+            moving_objects.discard(item_id)
             logging.info(f"Removed item id: {item_id} of type: {item_type}")
         except KeyError:
             pass
@@ -331,8 +424,6 @@ def on_message(client, userdata, msg):
         obj = FrigateObject(after)
         known_objects[item_id] = obj
 
-
-
         if 'box' in after['attributes']:
             logging.info("!!!PACKAGE DELIVERY!!!")
 
@@ -347,6 +438,16 @@ def on_message(client, userdata, msg):
         obj = known_objects.get(item_id, FrigateObject(after))
         obj.update(after)
 
+
+
+############## GLOBAL OBJECTS ################
+known_objects = {
+    # Key: object id. Value: object object
+}
+
+notify = Notifier()
+moving_objects = WaitSet()
+################################################
 
 if __name__ == "__main__":
     # Import config file
