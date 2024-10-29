@@ -129,11 +129,12 @@ class WaitSet(set):
 class FrigateObject:
     def __init__(self, payload):
         self._moving = False # default to false
-        self.is_moving = not payload['stationary']
         self.id = payload['id']
         self.type = payload['label']
         self.conf = payload['score']
         self.box = payload['box']
+
+        self.is_moving = not payload['stationary']
 
     @property
     def is_moving(self) -> bool:
@@ -145,7 +146,7 @@ class FrigateObject:
             raise ValueError("Value for Moving must be a boolean!")
 
         if value is True and self._moving == False:
-            notify() # Notify immediately upon object starting motion
+            notify(self.type, 'moving', self.conf) # Notify immediately upon object starting motion
             moving_objects.add(self.id)
         elif not value and self._moving:
             moving_objects.discard(self.id)
@@ -247,7 +248,7 @@ def MotionMonitor():
         moving_objects.wait() # Do nothing unless something is moving.
 
         for _id in moving_objects:
-            item = moving_objects.get(_id)
+            item = known_objects.get(_id)
             if item is not None:
                 notify(item.type, 'motion', item.conf)
                 logging.info("MOVING: One or more objects is moving. Notifying.")
