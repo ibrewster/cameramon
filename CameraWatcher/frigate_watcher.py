@@ -206,7 +206,8 @@ def on_connect(client, userdata, flags, rc, properties):
 
 def connect_mqtt():
     broker = 'conductor.brewstersoft.net'
-    client_id = 'frigate-mqtt-monitor-test'
+    current_time = str(int(time.time()))[:-3]
+    client_id = f'frigate-mqtt-monitor-{current_time}'
     username = 'hamqtt'
     password = 'Sh@nima821'
 
