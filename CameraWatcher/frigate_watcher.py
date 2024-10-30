@@ -189,22 +189,18 @@ class Notifier:
                 #  Throttle notifications to one every 5 seconds
                 with self._time_lock:
                     if cur_time - self._last_notification < 5:
+                        self._queue.task_done()
                         continue
 
                     self._last_notification = cur_time
                 if not CONFIG.NOTIFY:
-                    return
+                    self._queue.task_done()
+                    continue
 
                 if self._mqtt:
-                    payload = {
-                        'camera': item[0],
-                        'label': item[1],
-                        'type': item[2],
-                        'conf': item[3],
-                    }
                     try:
-                        json_payload = json.dumps(payload)
-                        result = self._mqtt.publish(CONFIG.PUB_TOPIC, json_payload)
+                        payload = json.dumps(item)
+                        result = self._mqtt.publish(CONFIG.PUB_TOPIC, payload)
                         status = result[0]
                         if status == 0:
                             logging.info("Posted MQTT Notification")
@@ -215,19 +211,30 @@ class Notifier:
                 else:
                     logging.warning("MQTT client not set; cannot publish notification.")
 
+                # This block of code isn't currently in use, but may be revived at a future time
+                # for any number of reasons.
                 # try:
                     # result = requests.get('http://10.27.81.71:5000/camview')
                     # result.raise_for_status()
                     # logging.info("URL notified")
                 # except Exception as e:
                     # logging.warning(f"Unable to call URL: {e}")
+
+                self._queue.task_done()
             except Exception as e:
                 logging.error(f"Unexpected error in notify loop: {e}")
 
     def __call__(self, obj_type, detection_type, confidence, camera_name = None):
         if camera_name is None:
             camera_name = CONFIG.CAMERA_NAME
-        notification = (camera_name, obj_type, detection_type, confidence)
+
+        notification = {
+            'camera': camera_name,  # Replace with your actual instance identifier
+            'label': obj_type,
+            'type': detection_type,
+            'conf': confidence,
+        }
+
         self._queue.put(notification)
 
 def MotionMonitor():
@@ -247,16 +254,27 @@ def MotionMonitor():
     while True:
         moving_objects.wait() # Do nothing unless something is moving.
 
+        types = []
+        confidences = []
+        orphaned_ids = []
+
         for _id in moving_objects:
             item = known_objects.get(_id)
             if item is not None:
-                notify(item.type, 'motion', item.conf)
-                logging.info("MOVING: One or more objects is moving. Notifying.")
+                types.append(item.type)
+                confidences.append(item.conf)
             else:
                 # if item does not exist in known_objects, it should not be in moving_objects
-                # It should have been removed elsewhere, but go ahead and remove it here
+                # It should have been removed elsewhere, but go ahead and mark it for removal here
                 logging.warning(f"Orphaned item id {_id} found in moving_objects. Discarding it.")
-                moving_objects.discard(item)
+                orphaned_ids.append(_id)
+
+        if types:
+            logging.info("MOVING: One or more objects is moving. Notifying.")
+            notify(types, 'motion', confidences)
+
+        for _id in orphaned_ids:
+            moving_objects.discard(item)
 
         time.sleep(2) # Throttle this loop to run not more often than once every two seconds.
 
