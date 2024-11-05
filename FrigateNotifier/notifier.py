@@ -39,7 +39,8 @@ class Notifier:
                 if self._mqtt:
                     try:
                         payload = json.dumps(item)
-                        result = self._mqtt.publish(CONFIG.PUB_TOPIC, payload)
+                        # result = self._mqtt.publish(CONFIG.PUB_TOPIC, payload)
+                        result = self._mqtt.publish('cameramon/object', 'detected')
                         status = result[0]
                         if status == 0:
                             logging.info("Posted MQTT Notification")
