@@ -4,10 +4,6 @@ import json
 import logging
 import os
 import queue
-<<<<<<< HEAD
-
-=======
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
 import requests
 import sys
 import threading
@@ -17,14 +13,6 @@ from datetime import datetime
 
 from paho.mqtt import client as mqtt_client
 
-<<<<<<< HEAD
-LOG_LEVEL = logging.INFO
-FILE_DIR = '/data/cameramon'
-# FILE_DIR = '/Users/israel/Desktop/cameramon'
-CAMERA_NAME = 'drivecam'
-DELIVERY_SERVICES = frozenset(("usps", "ups", "fedex", "amazon", "dhl"))
-
-=======
 def load_config(config_file):
     """
     Loads configuration parameters from a specified Python file.
@@ -137,7 +125,8 @@ class WaitSet(set):
         # Clear the event if the set is empty
         if not self:
             self._event.clear()  # Clear the event flag if the set is empty
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
+
+DELIVERY_SERVICES = frozenset(("usps", "ups", "fedex", "amazon", "dhl"))
 
 class FrigateObject:
     def __init__(self, payload):
@@ -185,12 +174,8 @@ class Notifier:
     def __init__(self):
         self._queue = queue.Queue()
         self._mqtt = None
-        self._last_notification = {}
+        self._last_notification = {}  # Keep as dict for per-topic tracking
         self._time_lock = threading.Lock()
-<<<<<<< HEAD
-        self._notify = queue.Queue()
-=======
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
         self._message_thread = threading.Thread(target=self._notify_loop, daemon=True)
         self._message_thread.start()
 
@@ -200,87 +185,58 @@ class Notifier:
     def _notify_loop(self):
         logging.info("Starting notify thread")
         while True:
-<<<<<<< HEAD
-            topic = self._notify.get()
-            cur_time = time.time()
-            
-            #  Throttle notifications to one every 5 seconds            
-            with self._time_lock:
-                if cur_time - self._last_notification.get(topic, 0) < 5:
-                    continue
-            
-                self._last_notification[topic] = cur_time
-        
-            if self._mqtt:
-                result = self._mqtt.publish(topic, 'detected')
-                status = result[0]
-                if status == 0:
-                    logging.info(f"Posted MQTT Notification to {topic}")
-                else:
-                    logging.warning(f"Failed posting MQTT notification to {topic}. Result: {result}")
-        
-    def __call__(self, topic='cameramon/object'):
-        self._notify.put(topic)
-    
-known_objects = {
-    # Key: object id. Value: object object
-}
-=======
             try:
-                item = self._queue.get()
+                topic, item = self._queue.get()
                 cur_time = time.time()
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
 
-                #  Throttle notifications to one every 5 seconds
+                # Throttle notifications per-topic to one every 5 seconds
                 with self._time_lock:
-                    if cur_time - self._last_notification < 5:
+                    if cur_time - self._last_notification.get(topic, 0) < 5:
                         self._queue.task_done()
                         continue
 
-                    self._last_notification = cur_time
+                    self._last_notification[topic] = cur_time
+
                 if not CONFIG.NOTIFY:
                     self._queue.task_done()
                     continue
 
                 if self._mqtt:
                     try:
-                        payload = json.dumps(item)
-                        result = self._mqtt.publish(CONFIG.PUB_TOPIC, payload)
+                        payload = item if isinstance(item, str) else json.dumps(item)
+                        result = self._mqtt.publish(topic, payload)
                         status = result[0]
                         if status == 0:
-                            logging.info("Posted MQTT Notification")
+                            logging.info(f"Posted MQTT Notification to {topic}")
                         else:
-                            logging.warning(f"Failed posting MQTT notification. Result: {result}")
+                            logging.warning(f"Failed posting MQTT notification to {topic}. Result: {result}")
                     except (TypeError, ValueError) as e:
                         logging.error(f"Error serializing or publishing payload: {e}")
                 else:
                     logging.warning("MQTT client not set; cannot publish notification.")
 
-                # This block of code isn't currently in use, but may be revived at a future time
-                # for any number of reasons.
-                # try:
-                    # result = requests.get('http://10.27.81.71:5000/camview')
-                    # result.raise_for_status()
-                    # logging.info("URL notified")
-                # except Exception as e:
-                    # logging.warning(f"Unable to call URL: {e}")
-
                 self._queue.task_done()
             except Exception as e:
                 logging.error(f"Unexpected error in notify loop: {e}")
 
-    def __call__(self, obj_type, detection_type, confidence, camera_name = None):
+    def __call__(self, obj_type, detection_type, confidence, camera_name=None):
         if camera_name is None:
             camera_name = CONFIG.CAMERA_NAME
-
-        notification = {
-            'camera': camera_name,  # Replace with your actual instance identifier
+            
+        message = {
+            'camera': camera_name,
             'label': obj_type,
             'type': detection_type,
             'conf': confidence,
         }
 
-        self._queue.put(notification)
+        self._queue.put((CONFIG.PUB_TOPIC, message))
+        
+    def send_custom(self, message, topic=None):
+        if topic is None:
+            topic = CONFIG.PUB_TOPIC
+
+        self._queue.put((topic, message))
 
 def MotionMonitor():
     """
@@ -451,9 +407,8 @@ def save_annotations(payload):
     if clean_snapshot:
         with open(clean_filename, 'wb') as clean_file:
             clean_file.write(clean_snapshot)
-<<<<<<< HEAD
-        logging.info(f"Clean snapshot saved to: {clean_filename}")    
-   
+        logging.info(f"Clean snapshot saved to: {clean_filename}")
+
 def boxes_match(box1, box2, iou_thresh=0.5, max_center_dist=20):
     from math import sqrt
 
@@ -485,10 +440,7 @@ def match_existing(after):
             continue
         if boxes_match(existing.box, after['box']):  # IoU or center-distance threshold
             return existing
-=======
-        logging.info(f"Clean snapshot saved to: {clean_filename}")
-
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
+    return None
 
 def on_message(client, userdata, msg):
     json_payload = msg.payload.decode()
@@ -519,8 +471,7 @@ def on_message(client, userdata, msg):
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
             return
-<<<<<<< HEAD
-    
+
         # See if we think this is the same object, just with a different ID
         existing = match_existing(after) # object or None
         if existing:
@@ -528,40 +479,27 @@ def on_message(client, userdata, msg):
             known_objects[item_id] = existing
             logging.info(f"Re-acquired {item_type} with new id {item_id}")
             return
-            
-=======
 
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
         # add the object to our list
         logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
         obj = FrigateObject(after)
         known_objects[item_id] = obj
-<<<<<<< HEAD
-        
+
         # Save the payload
-        save_annotations(payload)        
-        
+        save_annotations(payload)
+
         # Check for fancy stuff
         delivery_vehicle = False
         if item_type == 'car':
             sub_label = after.get("sub_label")
             if sub_label and isinstance(sub_label, list):
                 delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
-        
+
         if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
-            notify('cameramon/delivery')
-            
-        notify()
-=======
-
-        if 'box' in after['attributes']:
-            logging.info("!!!PACKAGE DELIVERY!!!")
->>>>>>> cac9d3c541f9fe991f5261db4b47c9ee33faf446
+            notify.send_custom('detected', topic='cameramon/delivery')
 
         if obj.is_moving:
-            # Save the payload
-            save_annotations(payload)
             notify(obj.type, 'new', obj.conf)
         else:
             # If it's a "new" object, but is stationary, don't notify about it, just start tracking.
