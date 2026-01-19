@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import queue
+
 import requests
 import threading
 import time
@@ -13,11 +15,14 @@ LOG_LEVEL = logging.INFO
 FILE_DIR = '/data/cameramon'
 # FILE_DIR = '/Users/israel/Desktop/cameramon'
 CAMERA_NAME = 'drivecam'
+DELIVERY_SERVICES = frozenset(("usps", "ups", "fedex", "amazon", "dhl"))
+
 
 class FrigateObject:
     def __init__(self, payload):
         self._moving = False
         self.id = payload['id']
+        self.ids = {payload['id']}
         self.type = payload['label']
         self.conf = payload['score']
         self.box = payload['box']
@@ -38,9 +43,9 @@ class FrigateObject:
 class Notifier:
     def __init__(self):
         self._mqtt = None
-        self._last_notification = 0
+        self._last_notification = {}
         self._time_lock = threading.Lock()
-        self._notify = threading.Event()
+        self._notify = queue.Queue()
         self._message_thread = threading.Thread(target=self._notify_loop, daemon=True)
         self._message_thread.start()
         
@@ -50,34 +55,26 @@ class Notifier:
     def _notify_loop(self):
         logging.info("Starting notify thread")
         while True:
-            self._notify.wait()
-            self._notify.clear()
+            topic = self._notify.get()
             cur_time = time.time()
             
             #  Throttle notifications to one every 5 seconds            
             with self._time_lock:
-                if cur_time - self._last_notification < 5:
+                if cur_time - self._last_notification.get(topic, 0) < 5:
                     continue
             
-                self._last_notification = cur_time
+                self._last_notification[topic] = cur_time
         
             if self._mqtt:
-                result = self._mqtt.publish('cameramon/object', 'detected')
+                result = self._mqtt.publish(topic, 'detected')
                 status = result[0]
                 if status == 0:
-                    logging.info("Posted MQTT Notification")
+                    logging.info(f"Posted MQTT Notification to {topic}")
                 else:
-                    logging.warning(f"Failed posting MQTT notification. Result: {result}")
-                    
-            # try:
-                # result = requests.get('http://10.27.81.71:5000/camview')
-                # result.raise_for_status()
-                # logging.info("URL notified")
-            # except Exception as e:
-                # logging.warning(f"Unable to call URL: {e}")  
+                    logging.warning(f"Failed posting MQTT notification to {topic}. Result: {result}")
         
-    def __call__(self):
-        self._notify.set()
+    def __call__(self, topic='cameramon/object'):
+        self._notify.put(topic)
     
 known_objects = {
     # Key: object id. Value: object object
@@ -226,7 +223,38 @@ def save_annotations(payload):
         with open(clean_filename, 'wb') as clean_file:
             clean_file.write(clean_snapshot)
         logging.info(f"Clean snapshot saved to: {clean_filename}")    
-    
+   
+def boxes_match(box1, box2, iou_thresh=0.5, max_center_dist=20):
+    from math import sqrt
+
+    # IoU
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+    if x2 < x1 or y2 < y1:
+        iou_val = 0.0
+    else:
+        inter_area = (x2 - x1) * (y2 - y1)
+        area1 = (box1[2]-box1[0]) * (box1[3]-box1[1])
+        area2 = (box2[2]-box2[0]) * (box2[3]-box2[1])
+        iou_val = inter_area / (area1 + area2 - inter_area)
+
+    # Center distance
+    cx1 = (box1[0] + box1[2]) / 2
+    cy1 = (box1[1] + box1[3]) / 2
+    cx2 = (box2[0] + box2[2]) / 2
+    cy2 = (box2[1] + box2[3]) / 2
+    center_dist = sqrt((cx2-cx1)**2 + (cy2-cy1)**2)
+
+    return iou_val >= iou_thresh or center_dist <= max_center_dist
+
+def match_existing(after):
+    for existing in known_objects.values():
+        if existing.type != after['label']:
+            continue
+        if boxes_match(existing.box, after['box']):  # IoU or center-distance threshold
+            return existing
 
 def on_message(client, userdata, msg):
     json_payload = msg.payload.decode()
@@ -243,6 +271,7 @@ def on_message(client, userdata, msg):
     # See if we need to remove this object (end time set)
     if after['end_time'] is not None:
         try:
+            known_objects[item_id].ids.remove(item_id)
             del known_objects[item_id]
             logging.info(f"Removed item id: {item_id} of type: {item_type}")            
         except KeyError:
@@ -250,12 +279,19 @@ def on_message(client, userdata, msg):
         return
 
     # see if this is a new object
-    if item_id not in known_objects:
+    if item_id not in known_objects:        
         if not after['current_zones']:
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
             return
     
+        # See if we think this is the same object, just with a different ID
+        existing = match_existing(after) # object or None
+        if existing:
+            existing.ids.add(item_id)
+            known_objects[item_id] = existing
+            logging.info(f"Re-acquired {item_type} with new id {item_id}")
+            return
             
         # add the object to our list
         logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
@@ -265,8 +301,16 @@ def on_message(client, userdata, msg):
         # Save the payload
         save_annotations(payload)        
         
-        if 'box' in after['attributes']:
+        # Check for fancy stuff
+        delivery_vehicle = False
+        if item_type == 'car':
+            sub_label = after.get("sub_label")
+            if sub_label and isinstance(sub_label, list):
+                delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
+        
+        if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
+            notify('cameramon/delivery')
             
         notify()
 
