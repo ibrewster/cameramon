@@ -1,1 +1,7 @@
 __pycache__
+.DS_Store
+constants.py
+data
+*.wpr
+*.wpu
+*-env
