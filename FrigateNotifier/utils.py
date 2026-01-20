@@ -20,6 +20,7 @@ def setup_logging(log_level):
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)  # Set the root logger level
     root_logger.handlers = [stream_handler]  # Replace existing handlers with the new one
+    root_logger.propagate = False
 
 
 class WaitSet(set):

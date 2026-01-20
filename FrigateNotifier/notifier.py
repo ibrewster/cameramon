@@ -22,7 +22,7 @@ class Notifier:
         logging.info("Starting notify thread")
         while True:
             try:
-                item = self._queue.get()
+                topic, item = self._queue.get()
                 cur_time = time.time()
 
                 #  Throttle notifications to one every 5 seconds
@@ -40,7 +40,7 @@ class Notifier:
                     try:
                         payload = json.dumps(item)
                         # result = self._mqtt.publish(CONFIG.PUB_TOPIC, payload)
-                        result = self._mqtt.publish('cameramon/object', 'detected')
+                        result = self._mqtt.publish(topic, item)
                         status = result[0]
                         if status == 0:
                             logging.info("Posted MQTT Notification")
@@ -50,15 +50,6 @@ class Notifier:
                         logging.error(f"Error serializing or publishing payload: {e}")
                 else:
                     logging.warning("MQTT client not set; cannot publish notification.")
-
-                # This block of code isn't currently in use, but may be revived at a future time
-                # for any number of reasons.
-                # try:
-                    # result = requests.get('http://10.27.81.71:5000/camview')
-                    # result.raise_for_status()
-                    # logging.info("URL notified")
-                # except Exception as e:
-                    # logging.warning(f"Unable to call URL: {e}")
 
                 self._queue.task_done()
             except Exception as e:
@@ -75,6 +66,9 @@ class Notifier:
             'conf': confidence,
         }
 
-        self._queue.put(notification)
+        self._queue.put(('cameramon/object', 'detected'))
+        
+    def send_custom(self, message, topic):
+        self._queue.put((topic, message))
 
 notify = Notifier()

@@ -11,6 +11,8 @@ from . import frigate, CONFIG
 from .notifier import notify
 from .utils import save_annotations
 
+DELIVERY_SERVICES = frozenset(("usps", "ups", "fedex", "amazon", "dhl"))
+
 def on_disconnect(client, userdata, disconnect_flags, reason, properties):
     # Determine if the disconnect reason might be resolved with a retry
     retryable_flags = [0, 2, 3, 6, 7, 16]
@@ -47,6 +49,7 @@ def on_message(client, userdata, msg):
     after = payload['after']
     item_id = after['id']
     item_type = after['label']
+    sub_label = after.get("sub_label")    
 
     # Make sure this isn't a false positive. Ignore it if so.
     if after['false_positive'] == True:
@@ -74,8 +77,17 @@ def on_message(client, userdata, msg):
         obj = frigate.FrigateObject(after)
         frigate.known_objects[item_id] = obj
 
-        if 'box' in after['attributes']:
+        # Check for fancy stuff
+        delivery_vehicle = False
+        if sub_label:
+            if isinstance(sub_label, list):
+                delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
+            else:
+                logging.warning(f"Sub label {sub_label} is not a list!")                
+
+        if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
+            notify.send_custom('detected', 'cameramon/delivery')
 
         if obj.is_moving:
             # Save the payload
