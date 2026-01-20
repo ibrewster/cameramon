@@ -126,8 +126,6 @@ class WaitSet(set):
         if not self:
             self._event.clear()  # Clear the event flag if the set is empty
 
-DELIVERY_SERVICES = frozenset(("usps", "ups", "fedex", "amazon", "dhl"))
-
 class FrigateObject:
     def __init__(self, payload):
         self._moving = False # default to false
@@ -449,6 +447,7 @@ def on_message(client, userdata, msg):
     after = payload['after']
     item_id = after['id']
     item_type = after['label']
+    sub_label = after.get("sub_label")
 
     # Make sure this isn't a false positive. Ignore it if so.
     if after['false_positive'] == True:
@@ -490,14 +489,15 @@ def on_message(client, userdata, msg):
 
         # Check for fancy stuff
         delivery_vehicle = False
-        if item_type == 'car':
-            sub_label = after.get("sub_label")
-            if sub_label and isinstance(sub_label, list):
+        if sub_label:
+            if isinstance(sub_label, list):
                 delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
+            else:
+                logging.warning(f"Sub label {sub_label} is not a list!")                
 
         if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
-            notify.send_custom('detected', topic='cameramon/delivery')
+            notify.send_custom('detected', 'cameramon/delivery')
 
         if obj.is_moving:
             notify(obj.type, 'new', obj.conf)
@@ -517,6 +517,8 @@ known_objects = {
 
 notify = Notifier()
 moving_objects = WaitSet()
+DELIVERY_SERVICES = frozenset(("usps", "ups", "fedex", "amazon", "dhl"))
+
 ################################################
 
 if __name__ == "__main__":
