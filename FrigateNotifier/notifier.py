@@ -10,7 +10,7 @@ class Notifier:
     def __init__(self):
         self._queue = queue.Queue()
         self._mqtt = None
-        self._last_notification = 0
+        self._last_notification = {}
         self._time_lock = threading.Lock()
         self._message_thread = threading.Thread(target=self._notify_loop, daemon=True)
         self._message_thread.start()
@@ -27,11 +27,11 @@ class Notifier:
 
                 #  Throttle notifications to one every 5 seconds
                 with self._time_lock:
-                    if cur_time - self._last_notification < 5:
+                    if cur_time - self._last_notification.get(topic, 0) < 5:
                         self._queue.task_done()
                         continue
 
-                    self._last_notification = cur_time
+                    self._last_notification[topic] = cur_time
                 if not CONFIG.NOTIFY:
                     self._queue.task_done()
                     continue
