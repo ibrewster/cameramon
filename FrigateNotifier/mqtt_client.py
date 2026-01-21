@@ -67,7 +67,7 @@ def on_message(client, userdata, msg):
 
     # see if this is a new object
     if item_id not in frigate.known_objects:
-        if not after['current_zones']:
+        if not after['current_zones'] or after['pending_loitering']:
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
             return
