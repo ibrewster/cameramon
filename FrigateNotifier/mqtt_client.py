@@ -1,9 +1,6 @@
 import json
 import logging
-import os
 import time
-
-from datetime import datetime
 
 from paho.mqtt import client as mqtt_client
 
@@ -87,7 +84,7 @@ def on_message(client, userdata, msg):
 
         if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
-            message = 'usps' if delivery_vehicle == 'usps' else 'parcel'
+            message = 'usps' if sub_label[0] == 'usps' else 'parcel'
             notify.send_custom(message, 'cameramon/delivery')
 
         if obj.is_moving:
