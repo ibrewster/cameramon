@@ -84,8 +84,8 @@ def on_message(client, userdata, msg):
 
         if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
-            message = 'usps' if sub_label[0] == 'usps' else 'parcel'
-            notify.send_custom(message, 'cameramon/delivery')
+            topic = 'delivery/usps' if sub_label[0] == 'usps' else 'delivery/parcel'
+            notify.send_custom("ON", topic)
 
         if obj.is_moving:
             # Save the payload
