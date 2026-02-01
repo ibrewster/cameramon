@@ -4,12 +4,13 @@ import queue
 import threading
 import time
 
+from paho.mqtt.client import Client
 from . import CONFIG
 
 class Notifier:
     def __init__(self):
         self._queue = queue.Queue()
-        self._mqtt = None
+        self._mqtt:Client = None
         self._last_notification = {}
         self._time_lock = threading.Lock()
         self._message_thread = threading.Thread(target=self._notify_loop, daemon=True)
@@ -22,7 +23,9 @@ class Notifier:
         logging.info("Starting notify thread")
         while True:
             try:
-                topic, item = self._queue.get()
+                topic, item, *opt = self._queue.get()
+                retain = True if opt and opt[0] else False
+                
                 cur_time = time.time()
 
                 #  Throttle notifications to one every 5 seconds
@@ -40,7 +43,7 @@ class Notifier:
                     try:
                         payload = json.dumps(item)
                         # result = self._mqtt.publish(CONFIG.PUB_TOPIC, payload)
-                        result = self._mqtt.publish(topic, item)
+                        result = self._mqtt.publish(topic, item, retain=retain)
                         status = result[0]
                         if status == 0:
                             logging.info("Posted MQTT Notification")
@@ -68,7 +71,7 @@ class Notifier:
 
         self._queue.put(('cameramon/object', 'detected'))
         
-    def send_custom(self, message, topic):
-        self._queue.put((topic, message))
+    def send_custom(self, message, topic, retain=False):
+        self._queue.put((topic, message, retain))
 
 notify = Notifier()

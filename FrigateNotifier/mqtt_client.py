@@ -85,7 +85,7 @@ def on_message(client, userdata, msg):
         if item_type == 'package' or delivery_vehicle:
             logging.info("!!!PACKAGE DELIVERY!!!")
             topic = 'delivery/usps' if sub_label[0] == 'usps' else 'delivery/parcel'
-            notify.send_custom("ON", topic)
+            notify.send_custom("ON", topic, retain=True)
 
         if obj.is_moving:
             # Save the payload
@@ -105,7 +105,7 @@ def on_connect(client, userdata, flags, rc, properties):
     else:
         logging.warning("Failed to connet, return code: %s", mqtt_client.error_string(rc))
 
-def connect_mqtt():
+def connect_mqtt() -> mqtt_client.Client:
     broker = 'conductor.brewstersoft.net'
     current_time = str(int(time.time()))[:-3]
     client_id = f'frigate-mqtt-monitor-{current_time}'
