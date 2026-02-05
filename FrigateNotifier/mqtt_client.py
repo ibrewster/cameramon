@@ -51,6 +51,11 @@ def on_message(client, userdata, msg):
     # Make sure this isn't a false positive. Ignore it if so.
     if after['false_positive'] == True:
         return
+    
+    # Ignore if pending loitering
+    if after['pending_loitering']:
+        logging.debug(f"Ignoring {item_type} as it is not in the zones")
+        return
 
     # See if we need to remove this object (end time set)
     if after['end_time'] is not None:
@@ -61,6 +66,19 @@ def on_message(client, userdata, msg):
         except KeyError:
             pass
         return
+    
+    # Check for fancy stuff
+    delivery_vehicle = False
+    if sub_label:
+        if isinstance(sub_label, list):
+            delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
+        else:
+            logging.warning(f"Sub label {sub_label} is not a list!")                
+
+    if item_type == 'package' or delivery_vehicle:
+        logging.info("!!!PACKAGE DELIVERY!!!")
+        topic = 'delivery/usps' if sub_label[0] == 'usps' else 'delivery/parcel'
+        notify.send_custom("ON", topic, retain=True)    
 
     # see if this is a new object
     if item_id not in frigate.known_objects:
@@ -73,19 +91,6 @@ def on_message(client, userdata, msg):
         logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
         obj = frigate.FrigateObject(after)
         frigate.known_objects[item_id] = obj
-
-        # Check for fancy stuff
-        delivery_vehicle = False
-        if sub_label:
-            if isinstance(sub_label, list):
-                delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
-            else:
-                logging.warning(f"Sub label {sub_label} is not a list!")                
-
-        if item_type == 'package' or delivery_vehicle:
-            logging.info("!!!PACKAGE DELIVERY!!!")
-            topic = 'delivery/usps' if sub_label[0] == 'usps' else 'delivery/parcel'
-            notify.send_custom("ON", topic, retain=True)
 
         if obj.is_moving:
             # Save the payload
