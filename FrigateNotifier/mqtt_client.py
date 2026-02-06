@@ -46,16 +46,7 @@ def on_message(client, userdata, msg):
     after = payload['after']
     item_id = after['id']
     item_type = after['label']
-    sub_label = after.get("sub_label")    
-
-    # Make sure this isn't a false positive. Ignore it if so.
-    if after['false_positive'] == True:
-        return
-    
-    # Ignore if pending loitering
-    if after['pending_loitering']:
-        logging.debug(f"Ignoring {item_type} as it is not in the zones")
-        return
+    sub_label = after.get("sub_label")
 
     # See if we need to remove this object (end time set)
     if after['end_time'] is not None:
@@ -65,6 +56,15 @@ def on_message(client, userdata, msg):
             logging.info(f"Removed item id: {item_id} of type: {item_type}")
         except KeyError:
             pass
+        return
+    
+    # Make sure this isn't a false positive. Ignore it if so.
+    if after['false_positive'] == True:
+        return    
+    
+    # Ignore if pending loitering
+    if after['pending_loitering']:
+        logging.debug(f"Ignoring {item_type} as it is not in the zones")
         return
     
     # Check for fancy stuff
