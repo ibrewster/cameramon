@@ -68,20 +68,20 @@ def on_message(client, userdata, msg):
         return
     
     # Check for fancy stuff
-    delivery_vehicle = False
+    tag = None
     if sub_label:
         if isinstance(sub_label, list):
-            delivery_vehicle = sub_label[0] in DELIVERY_SERVICES
+            tag = sub_label[0]
         else:
-            logging.warning(f"Sub label {sub_label} is not a list!")                
+            logging.warning(f"Sub label {sub_label} is not a list!")
 
-    if item_type == 'package' or delivery_vehicle:
-        logging.info("!!!PACKAGE DELIVERY!!!")
-        topic = 'delivery/usps' if sub_label[0] == 'usps' else 'delivery/parcel'
-        notify.send_custom("ON", topic, retain=True)    
-
+    delivery_vehicle = tag in DELIVERY_SERVICES
+    
     # see if this is a new object
     if item_id not in frigate.known_objects:
+        if item_type == 'package' or delivery_vehicle:
+            notify_package(tag)
+            
         if not after['current_zones'] or after['pending_loitering']:
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
@@ -101,9 +101,16 @@ def on_message(client, userdata, msg):
             logging.info("Not notifying due to stationary object.")
     else:
         obj = frigate.known_objects.get(item_id, frigate.FrigateObject(after))
+        if not obj.delivery and delivery_vehicle:
+            notify_package(tag)
         obj.update(after)
 
-
+def notify_package(type_):
+    logging.info("***PACKAGE DELIVERY***")    
+    topic = 'delivery/usps' if type_ == 'usps' else 'delivery/parcel'
+    notify.send_custom("ON", topic, retain=True)            
+    
+    
 def on_connect(client, userdata, flags, rc, properties):
     if rc == 0:
         logging.info("Connected to MQTT Broker.")

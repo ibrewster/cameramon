@@ -20,6 +20,7 @@ class FrigateObject:
         self.type = payload['label']
         self.conf = payload['score']
         self.box = payload['box']
+        self.delivery = payload.get("sub_label", [None])[0]
 
         self.is_moving = not payload['stationary']
 
@@ -47,6 +48,8 @@ class FrigateObject:
         self.is_moving = not payload['stationary']
         self.conf = payload['score']
         self.box = payload['box']
+        if not self.delivery:
+            self.delivery = payload.get("sub_label", [None])[0]
 
     def __str__(self):
         return f"Object ID: {self.id}, Type: {self.type}, Confidence: {self.conf:.2f}%, Moving: {'Yes' if self._moving else 'No'}"
