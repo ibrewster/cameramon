@@ -62,14 +62,10 @@ def on_message(client, userdata, msg):
     if after['false_positive'] == True:
         return    
     
-    # Ignore if pending loitering
-    if after['pending_loitering']:
-        logging.debug(f"Ignoring {item_type} as it is not in the zones")
-        return
-    
     # Check for fancy stuff
     tag = None
     if sub_label:
+        logging.info(f"Detected item of type: {item_type} with sub_label of: {sub_label}")
         if isinstance(sub_label, list):
             tag = sub_label[0]
         else:
@@ -81,7 +77,7 @@ def on_message(client, userdata, msg):
     if item_id not in frigate.known_objects:
         if not after['current_zones'] or after['pending_loitering']:
             # ignore the object if not in any zones
-            logging.debug(f"Ignoring {item_type} as it is not in the zones")
+            logging.debug(f"Ignoring {item_type} as it is not in the zones or is pending Loitering")
             return
         
         if item_type == 'package' or delivery_vehicle:
