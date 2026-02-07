@@ -81,7 +81,7 @@ def on_message(client, userdata, msg):
             return
         
         if item_type == 'package' or delivery_vehicle:
-            notify_package(tag)        
+            notify_package(tag)
 
         # add the object to our list
         logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
@@ -98,7 +98,9 @@ def on_message(client, userdata, msg):
     else:
         obj = frigate.known_objects.get(item_id, frigate.FrigateObject(after))
         if not obj.delivery and delivery_vehicle:
-            notify_package(tag)
+            if time.time() - obj.created < 5:
+                logging.info("Vehicle type changed to delivery")
+                notify_package(tag)
         obj.update(after)
 
 def notify_package(type_):

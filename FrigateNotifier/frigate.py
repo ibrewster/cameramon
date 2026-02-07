@@ -1,4 +1,5 @@
 import logging
+import time
 
 import requests
 
@@ -21,6 +22,7 @@ class FrigateObject:
         self.conf = payload['score']
         self.box = payload['box']
         self.delivery = (payload.get("sub_label") or [None])[0]
+        self.created = time.time()
 
         self.is_moving = not payload['stationary']
 
@@ -48,7 +50,7 @@ class FrigateObject:
         self.is_moving = not payload['stationary']
         self.conf = payload['score']
         self.box = payload['box']
-        if not self.delivery:
+        if not self.delivery and (time.time() - self.created) < 5:
             self.delivery = (payload.get("sub_label") or [None])[0]
 
     def __str__(self):
