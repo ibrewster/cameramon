@@ -44,6 +44,10 @@ def on_message(client, userdata, msg):
     payload = json.loads(json_payload)
 
     after = payload['after']
+    camera = after['camera']
+    if camera not in ['drivecam', 'doorbellcam']:
+        return
+    
     item_id = after['id']
     item_type = after['label']
     sub_label = after.get("sub_label")
