@@ -79,16 +79,21 @@ def on_message(client, userdata, msg):
     
     # see if this is a new object
     if item_id not in frigate.known_objects:
-        if not after['current_zones'] or after['pending_loitering']:
+        if not after['current_zones']:
             # ignore the object if not in any zones
-            logging.debug(f"Ignoring {item_type} as it is not in the zones or is pending Loitering")
+            logging.debug(f"Ignoring {item_type} as it is not in the zones")
             return
         
+        # Notify about package delivery as soon as they are in the zone
         if item_type == 'package' or delivery_vehicle:
             notify_package(tag)
+            
+        if after['pending_loitering']:
+            logging.debug(f"Ignoring {item_type} as it is pending Loitering")
+            return            
 
         # add the object to our list
-        logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id} to the tracked list")
+        logging.info(f"NEW {item_type}, {after['score'] * 100:.2f}%: Adding {item_type} with id {item_id}, sub-label: {sub_label} to the tracked list")
         obj = frigate.FrigateObject(after)
         frigate.known_objects[item_id] = obj
 
