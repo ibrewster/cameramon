@@ -72,6 +72,7 @@ def on_message(client, userdata, msg):
         logging.info(f"Detected item of type: {item_type} with sub_label of: {sub_label}")
         if isinstance(sub_label, list):
             tag = sub_label[0]
+            logging.info(f"Detected {item_type} with tag of {tag}. In DELIVERY_SERVICES: {tag in DELIVERY_SERVICES}")
         else:
             logging.warning(f"Sub label {sub_label} is not a list!")
 
