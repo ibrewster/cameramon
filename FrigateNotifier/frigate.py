@@ -14,6 +14,8 @@ known_objects = {
 
 moving_objects = WaitSet()
 
+DELIVERY_TAG_UPDATE_WINDOW = 15  # seconds to allow late delivery tag assignment
+
 class FrigateObject:
     def __init__(self, payload):
         self._moving = False # default to false
@@ -50,7 +52,7 @@ class FrigateObject:
         self.is_moving = not payload['stationary']
         self.conf = payload['score']
         self.box = payload['box']
-        if not self.delivery and (time.time() - self.created) < 5:
+        if not self.delivery and (time.time() - self.created) < DELIVERY_TAG_UPDATE_WINDOW:
             self.delivery = (payload.get("sub_label") or [None])[0]
 
     def __str__(self):

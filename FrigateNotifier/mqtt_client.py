@@ -83,6 +83,10 @@ def on_message(client, userdata, msg):
         if not after['current_zones']:
             # ignore the object if not in any zones
             logging.debug(f"Ignoring {item_type} as it is not in the zones")
+            # Log if it's a delivery vehicle, though, since we want to know if they are just outside the zone
+            if delivery_vehicle:
+                logging.info(f"Detected delivery vehicle {tag} outside of zones")
+                # notify_package(tag)
             return
         
         # Notify about package delivery as soon as they are in the zone
@@ -107,10 +111,9 @@ def on_message(client, userdata, msg):
             logging.info("Not notifying due to stationary object.")
     else:
         obj = frigate.known_objects.get(item_id, frigate.FrigateObject(after))
-        if not obj.delivery and delivery_vehicle:
-            if time.time() - obj.created < 5:
-                logging.info("Vehicle type changed to delivery")
-                notify_package(tag)
+        if not obj.delivery and delivery_vehicle and (time.time() - obj.created) < frigate.DELIVERY_TAG_UPDATE_WINDOW:
+            logging.info("Vehicle type changed to delivery")
+            notify_package(tag)
         obj.update(after)
 
 def notify_package(type_):
