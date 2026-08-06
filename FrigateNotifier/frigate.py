@@ -14,7 +14,7 @@ known_objects = {
 
 moving_objects = WaitSet()
 
-DELIVERY_TAG_UPDATE_WINDOW = 15  # seconds to allow late delivery tag assignment
+DELIVERY_TAG_UPDATE_WINDOW = 45  # seconds to allow late delivery tag assignment
 
 class FrigateObject:
     def __init__(self, payload):
