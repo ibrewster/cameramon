@@ -50,6 +50,9 @@ def on_message(client, userdata, msg):
     
     item_id = after['id']
     item_type = after['label']
+    if item_type=='waste_bin':
+        return
+
     sub_label = after.get("sub_label")
 
     # See if we need to remove this object (end time set)
